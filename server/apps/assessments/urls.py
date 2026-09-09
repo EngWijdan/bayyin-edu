@@ -5,6 +5,9 @@ from .views import (
     AssessmentListCreateView,
     AssessmentQuestionDetailView,
     AssessmentQuestionListCreateView,
+    SubmissionAnswersView,
+    SubmissionDetailView,
+    SubmissionListCreateView,
 )
 
 urlpatterns = [
@@ -23,5 +26,20 @@ urlpatterns = [
         "assessments/<uuid:assessment_id>/questions/<uuid:question_id>/",
         AssessmentQuestionDetailView.as_view(),
         name="assessment-question-detail",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/submissions/",
+        SubmissionListCreateView.as_view(),
+        name="assessment-submission-list-create",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/submissions/<uuid:submission_id>/",
+        SubmissionDetailView.as_view(),
+        name="assessment-submission-detail",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/submissions/<uuid:submission_id>/answers/",
+        SubmissionAnswersView.as_view(),
+        name="assessment-submission-answers",
     ),
 ]

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../l10n/app_language.dart';
 import '../services/bayyin_api.dart';
 import '../widgets/async_states.dart';
+import 'assessment_submissions.dart';
 
 /// One assessment and its questions. The list handed over by the previous
 /// screen is only a summary, so the questions are fetched here.
@@ -82,6 +83,15 @@ class _AssessmentDetailsPageState extends State<AssessmentDetailsPage> {
             return ListView(
               padding: const EdgeInsets.all(20),
               children: [
+                Align(
+                  alignment: AlignmentDirectional.centerStart,
+                  child: FilledButton.tonalIcon(
+                    onPressed: _openSubmissions,
+                    icon: const Icon(Icons.people_alt_outlined),
+                    label: Text(strings.studentSubmissions),
+                  ),
+                ),
+                const SizedBox(height: 20),
                 Row(
                   children: [
                     Expanded(
@@ -119,6 +129,18 @@ class _AssessmentDetailsPageState extends State<AssessmentDetailsPage> {
               ],
             );
           },
+        ),
+      ),
+    );
+  }
+
+  void _openSubmissions() {
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => AssessmentSubmissionsPage(
+          gateway: widget.gateway,
+          token: widget.token,
+          assessment: widget.assessment,
         ),
       ),
     );

@@ -635,6 +635,273 @@ void main() {
     });
   });
 
+  group('تسليمات الطلاب', () {
+    testWidgets('تعرض طلاب الصف مع حالة كل واحد', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: FakeGateway(
+            role: 'TEACHER',
+            classrooms: [_classroom6a],
+            assessments: [_fractionsAssessment],
+            students: _roster,
+            submissions: [_existingSubmission],
+          ),
+        ),
+      );
+      await _reachSubmissions(
+        tester,
+        signIn: 'تسجيل الدخول',
+        assessments: 'الاختبارات',
+        submissions: 'تسليمات الطلاب',
+      );
+
+      expect(find.text('طالب أ'), findsOneWidget);
+      expect(find.text('S-001'), findsOneWidget);
+      expect(find.text('بدون اسم'), findsOneWidget);
+      expect(find.text('S-002'), findsOneWidget);
+      expect(find.text('تم الإدخال'), findsOneWidget);
+      expect(find.text('لم يُدخل'), findsOneWidget);
+      expect(find.text('تم إدخال 1 من 2'), findsOneWidget);
+    });
+
+    testWidgets('تعرض حالة عدم وجود تسليمات', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: FakeGateway(
+            role: 'TEACHER',
+            classrooms: [_classroom6a],
+            assessments: [_fractionsAssessment],
+            students: _roster,
+          ),
+        ),
+      );
+      await _reachSubmissions(
+        tester,
+        signIn: 'تسجيل الدخول',
+        assessments: 'الاختبارات',
+        submissions: 'تسليمات الطلاب',
+      );
+
+      expect(find.text('لا توجد تسليمات بعد'), findsOneWidget);
+      expect(find.text('لم يُدخل'), findsNWidgets(2));
+      expect(find.text('تم الإدخال'), findsNothing);
+    });
+
+    testWidgets('تعرض حالة صف بلا طلاب', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: FakeGateway(
+            role: 'TEACHER',
+            classrooms: [_classroom6a],
+            assessments: [_fractionsAssessment],
+          ),
+        ),
+      );
+      await _reachSubmissions(
+        tester,
+        signIn: 'تسجيل الدخول',
+        assessments: 'الاختبارات',
+        submissions: 'تسليمات الطلاب',
+      );
+
+      expect(find.text('لا يوجد طلاب في هذا الصف بعد.'), findsOneWidget);
+    });
+
+    testWidgets('shows the roster in English', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: FakeGateway(
+            role: 'TEACHER',
+            classrooms: [_classroom6a],
+            assessments: [_fractionsAssessment],
+            students: _roster,
+            submissions: [_existingSubmission],
+          ),
+          initialLocale: AppLocale.english,
+        ),
+      );
+      await _reachSubmissions(
+        tester,
+        signIn: 'Sign in',
+        assessments: 'Assessments',
+        submissions: 'Student submissions',
+      );
+
+      expect(find.text('Entered'), findsOneWidget);
+      expect(find.text('Not entered'), findsOneWidget);
+      expect(find.text('1 of 2 entered'), findsOneWidget);
+      expect(find.text('Unnamed'), findsOneWidget);
+    });
+  });
+
+  group('إدخال إجابات التسليم', () {
+    testWidgets('تنشئ تسليمًا عند اختيار طالب بلا تسليم', (tester) async {
+      final gateway = FakeGateway(
+        role: 'TEACHER',
+        classrooms: [_classroom6a],
+        assessments: [_fractionsAssessment],
+        students: _roster,
+      );
+      await tester.pumpWidget(BayyinApp(gateway: gateway));
+      await _reachSubmissions(
+        tester,
+        signIn: 'تسجيل الدخول',
+        assessments: 'الاختبارات',
+        submissions: 'تسليمات الطلاب',
+      );
+      await tester.tap(find.text('طالب أ'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.createSubmissionCalls, 1);
+      expect(find.text('إجابة الطالب'), findsNWidgets(2));
+      expect(find.text('ما ناتج 1/2 + 1/4؟'), findsOneWidget);
+      expect(find.text('حفظ الإجابات'), findsOneWidget);
+    });
+
+    testWidgets('تفتح التسليم الموجود بدل إنشاء تسليم مكرر', (tester) async {
+      final gateway = FakeGateway(
+        role: 'TEACHER',
+        classrooms: [_classroom6a],
+        assessments: [_fractionsAssessment],
+        students: _roster,
+        submissions: [_existingSubmission],
+      );
+      await tester.pumpWidget(BayyinApp(gateway: gateway));
+      await _reachSubmissions(
+        tester,
+        signIn: 'تسجيل الدخول',
+        assessments: 'الاختبارات',
+        submissions: 'تسليمات الطلاب',
+      );
+      await tester.tap(find.text('طالب أ'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.createSubmissionCalls, 0);
+      // The answer already stored on the server shows up in the field.
+      expect(find.text('3/4'), findsOneWidget);
+    });
+
+    testWidgets('تعرض الأسئلة بترتيبها ودرجاتها', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: FakeGateway(
+            role: 'TEACHER',
+            classrooms: [_classroom6a],
+            assessments: [_fractionsAssessment],
+            students: _roster,
+            submissions: [_existingSubmission],
+          ),
+        ),
+      );
+      await _reachSubmissions(
+        tester,
+        signIn: 'تسجيل الدخول',
+        assessments: 'الاختبارات',
+        submissions: 'تسليمات الطلاب',
+      );
+      await tester.tap(find.text('طالب أ'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('السؤال 1'), findsOneWidget);
+      expect(find.text('السؤال 2'), findsOneWidget);
+      expect(find.text('الدرجة القصوى: 2'), findsOneWidget);
+      expect(find.text('الدرجة القصوى: 3'), findsOneWidget);
+      expect(find.text('S-001'), findsOneWidget);
+    });
+
+    testWidgets('تحفظ الإجابات المعدلة وتؤكد الحفظ', (tester) async {
+      final gateway = FakeGateway(
+        role: 'TEACHER',
+        classrooms: [_classroom6a],
+        assessments: [_fractionsAssessment],
+        students: _roster,
+        submissions: [_existingSubmission],
+      );
+      await tester.pumpWidget(BayyinApp(gateway: gateway));
+      await _reachSubmissions(
+        tester,
+        signIn: 'تسجيل الدخول',
+        assessments: 'الاختبارات',
+        submissions: 'تسليمات الطلاب',
+      );
+      await tester.tap(find.text('طالب أ'));
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextField).at(0), 'ثلاثة أرباع');
+      await tester.enterText(find.byType(TextField).at(1), '1/2');
+      await _scrollAndTap(tester, 'حفظ الإجابات');
+
+      expect(find.text('تم الحفظ'), findsOneWidget);
+      await _settleSnackBars(tester);
+
+      // Reopening the submission shows what the gateway stored. The back
+      // button is found by type because its tooltip follows the app locale.
+      await tester.tap(find.byType(BackButton));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('طالب أ'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('ثلاثة أرباع'), findsOneWidget);
+      expect(find.text('1/2'), findsOneWidget);
+    });
+
+    testWidgets('تعرض حالة اختبار بلا أسئلة', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: FakeGateway(
+            role: 'TEACHER',
+            classrooms: [_classroom6a],
+            assessments: [_emptyAssessment],
+            students: _roster,
+          ),
+        ),
+      );
+      await _reachSubmissions(
+        tester,
+        signIn: 'تسجيل الدخول',
+        assessments: 'الاختبارات',
+        submissions: 'تسليمات الطلاب',
+      );
+      await tester.tap(find.text('طالب أ'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('لا توجد أسئلة في هذا الاختبار'), findsOneWidget);
+      expect(find.text('حفظ الإجابات'), findsNothing);
+    });
+
+    testWidgets('enters and saves answers in English', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: FakeGateway(
+            role: 'TEACHER',
+            classrooms: [_classroom6a],
+            assessments: [_fractionsAssessment],
+            students: _roster,
+          ),
+          initialLocale: AppLocale.english,
+        ),
+      );
+      await _reachSubmissions(
+        tester,
+        signIn: 'Sign in',
+        assessments: 'Assessments',
+        submissions: 'Student submissions',
+      );
+      await tester.tap(find.text('طالب أ'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Student answer'), findsNWidgets(2));
+      expect(find.text('Question 1'), findsOneWidget);
+      expect(find.text('Max score: 2'), findsOneWidget);
+
+      await tester.enterText(find.byType(TextField).at(0), '3/4');
+      await _scrollAndTap(tester, 'Save answers');
+
+      expect(find.text('Saved'), findsOneWidget);
+      await _settleSnackBars(tester);
+    });
+  });
+
   group('تبديل اللغة', () {
     testWidgets('يبدل شاشة الدخول فورًا دون إعادة تشغيل', (tester) async {
       await tester.pumpWidget(BayyinApp(gateway: FakeGateway(role: 'TEACHER')));
@@ -765,6 +1032,35 @@ const _fractionsAssessment = AssessmentRecord(
   ],
 );
 
+const _roster = [
+  StudentRecord(id: 'student-1', internalCode: 'S-001', displayName: 'طالب أ'),
+  StudentRecord(id: 'student-2', internalCode: 'S-002', displayName: ''),
+];
+
+const _existingSubmission = SubmissionRecord(
+  id: 'submission-1',
+  studentId: 'student-1',
+  studentName: 'طالب أ',
+  studentCode: 'S-001',
+  assessmentTitle: 'اختبار الكسور الأول',
+  answers: [
+    AnswerRecord(
+      questionId: 'question-1',
+      order: 1,
+      text: 'ما ناتج 1/2 + 1/4؟',
+      maxScore: 2,
+      answerText: '3/4',
+    ),
+    AnswerRecord(
+      questionId: 'question-2',
+      order: 2,
+      text: 'بسّط الكسر 4/8',
+      maxScore: 3,
+      answerText: '',
+    ),
+  ],
+);
+
 const _emptyAssessment = AssessmentRecord(
   id: 'assessment-1',
   title: 'اختبار الكسور الأول',
@@ -808,6 +1104,31 @@ Future<void> _openAssessments(
   }
 }
 
+/// Signs in and walks dashboard → assessments → details → submissions, which
+/// is how a teacher reaches the roster.
+Future<void> _reachSubmissions(
+  WidgetTester tester, {
+  required String signIn,
+  required String assessments,
+  required String submissions,
+}) async {
+  await _signIn(tester, signIn);
+  await _openAssessments(tester, assessments);
+  await tester.tap(find.text('اختبار الكسور الأول'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.text(submissions));
+  await tester.pumpAndSettle();
+}
+
+/// Taps a control that may sit below the fold of the 800x600 test viewport.
+Future<void> _scrollAndTap(WidgetTester tester, String label) async {
+  final target = find.text(label);
+  await tester.ensureVisible(target);
+  await tester.pumpAndSettle();
+  await tester.tap(target);
+  await tester.pumpAndSettle();
+}
+
 /// Lets a snack bar expire so its timer does not outlive the test.
 Future<void> _settleSnackBars(WidgetTester tester) async {
   await tester.pump(const Duration(seconds: 5));
@@ -835,7 +1156,9 @@ class FakeGateway implements BayyinGateway {
     List<AssessmentRecord> assessments = const [],
     this.assessmentsError,
     this.assessmentsFuture,
-  }) : _assessments = [...assessments];
+    List<SubmissionRecord> submissions = const [],
+  }) : _assessments = [...assessments],
+       _submissions = [...submissions];
 
   final String role;
   final bool failLogin;
@@ -854,6 +1177,11 @@ class FakeGateway implements BayyinGateway {
   final List<AssessmentRecord> _assessments;
   final Object? assessmentsError;
   final Future<List<AssessmentRecord>>? assessmentsFuture;
+
+  final List<SubmissionRecord> _submissions;
+
+  /// Lets a test prove an existing submission was reused instead of recreated.
+  int createSubmissionCalls = 0;
 
   @override
   Future<UserSession> login(String username, String password) async {
@@ -989,6 +1317,97 @@ class FakeGateway implements BayyinGateway {
       question,
     ]);
     return question;
+  }
+
+  /// Mirrors the real list endpoint, which returns summaries without answers.
+  @override
+  Future<List<SubmissionRecord>> fetchSubmissions({
+    required String token,
+    required String assessmentId,
+  }) async => [
+    for (final submission in _submissions)
+      SubmissionRecord(
+        id: submission.id,
+        studentId: submission.studentId,
+        studentName: submission.studentName,
+        studentCode: submission.studentCode,
+      ),
+  ];
+
+  @override
+  Future<SubmissionRecord> fetchSubmission({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+  }) async =>
+      _submissions.firstWhere((submission) => submission.id == submissionId);
+
+  @override
+  Future<SubmissionRecord> createSubmission({
+    required String token,
+    required String assessmentId,
+    required String studentId,
+  }) async {
+    createSubmissionCalls++;
+    if (_submissions.any((submission) => submission.studentId == studentId)) {
+      throw const ApiException('لهذا الطالب تسليم مسجل في هذا الاختبار.');
+    }
+    final student = students.firstWhere((entry) => entry.id == studentId);
+    final assessment = _assessments.firstWhere(
+      (entry) => entry.id == assessmentId,
+    );
+    final created = SubmissionRecord(
+      id: 'submission-${_submissions.length + 1}',
+      studentId: student.id,
+      studentName: student.displayName,
+      studentCode: student.internalCode,
+      assessmentTitle: assessment.title,
+      answers: [
+        for (final question in assessment.questions)
+          AnswerRecord(
+            questionId: question.id,
+            order: question.order,
+            text: question.text,
+            maxScore: question.maxScore,
+            answerText: '',
+          ),
+      ],
+    );
+    _submissions.add(created);
+    return created;
+  }
+
+  @override
+  Future<SubmissionRecord> saveAnswers({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+    required Map<String, String> answersByQuestionId,
+  }) async {
+    final index = _submissions.indexWhere(
+      (submission) => submission.id == submissionId,
+    );
+    final submission = _submissions[index];
+    final updated = SubmissionRecord(
+      id: submission.id,
+      studentId: submission.studentId,
+      studentName: submission.studentName,
+      studentCode: submission.studentCode,
+      assessmentTitle: submission.assessmentTitle,
+      answers: [
+        for (final answer in submission.answers)
+          AnswerRecord(
+            questionId: answer.questionId,
+            order: answer.order,
+            text: answer.text,
+            maxScore: answer.maxScore,
+            answerText:
+                answersByQuestionId[answer.questionId] ?? answer.answerText,
+          ),
+      ],
+    );
+    _submissions[index] = updated;
+    return updated;
   }
 
   @override

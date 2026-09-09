@@ -1,6 +1,7 @@
 from decimal import Decimal
 
 from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
 from django.db import IntegrityError, transaction
 from django.test import TestCase
 from rest_framework import status
@@ -8,9 +9,9 @@ from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
 
 from apps.accounts.models import UserProfile
-from apps.classrooms.models import Classroom
+from apps.classrooms.models import Classroom, Student
 
-from .models import Assessment, Question
+from .models import Assessment, Question, Submission, SubmissionAnswer
 
 
 def make_classroom(teacher, name, subject="الرياضيات"):
@@ -404,6 +405,425 @@ class AssessmentApiTests(APITestCase):
 
     def test_anonymous_caller_is_rejected(self):
         response = self.client.get("/api/v1/assessments/")
+
+        self.assertIn(
+            response.status_code,
+            (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+        )
+
+
+class SubmissionModelTests(TestCase):
+    """The API validates these too, but the model guards the admin and the ORM."""
+
+    def setUp(self):
+        user_model = get_user_model()
+        self.teacher = UserProfile.objects.create(
+            user=user_model.objects.create_user(username="teacher-one", password="test-only-password"),
+            role=UserProfile.Role.TEACHER,
+        )
+        self.class_6a = make_classroom(self.teacher, "سادس أ")
+        self.class_6b = make_classroom(self.teacher, "سادس ب")
+        self.assessment = Assessment.objects.create(
+            classroom=self.class_6a, title="اختبار الكسور الأول"
+        )
+        self.question = Question.objects.create(
+            assessment=self.assessment,
+            order=1,
+            text="ما ناتج 1/2 + 1/4؟",
+            max_score=Decimal("2"),
+            model_answer="3/4",
+        )
+        self.student_6a = Student.objects.create(
+            classroom=self.class_6a, internal_code="S-001", display_name="طالب أ"
+        )
+        self.student_6b = Student.objects.create(
+            classroom=self.class_6b, internal_code="S-900"
+        )
+
+    def test_one_submission_per_student_and_assessment(self):
+        Submission.objects.create(assessment=self.assessment, student=self.student_6a)
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            Submission.objects.create(
+                assessment=self.assessment, student=self.student_6a
+            )
+
+    def test_clean_rejects_a_student_from_another_classroom(self):
+        submission = Submission(assessment=self.assessment, student=self.student_6b)
+
+        with self.assertRaises(ValidationError):
+            submission.full_clean()
+
+    def test_clean_accepts_a_student_from_the_assessment_classroom(self):
+        submission = Submission(assessment=self.assessment, student=self.student_6a)
+
+        submission.full_clean()
+
+    def test_one_answer_per_question_and_submission(self):
+        submission = Submission.objects.create(
+            assessment=self.assessment, student=self.student_6a
+        )
+        SubmissionAnswer.objects.create(
+            submission=submission, question=self.question, answer_text="3/4"
+        )
+
+        with self.assertRaises(IntegrityError), transaction.atomic():
+            SubmissionAnswer.objects.create(
+                submission=submission, question=self.question, answer_text="1/2"
+            )
+
+    def test_clean_rejects_a_question_from_another_assessment(self):
+        submission = Submission.objects.create(
+            assessment=self.assessment, student=self.student_6a
+        )
+        foreign_question = Question.objects.create(
+            assessment=Assessment.objects.create(
+                classroom=self.class_6a, title="اختبار آخر"
+            ),
+            order=1,
+            text="سؤال غريب",
+            max_score=Decimal("1"),
+            model_answer="لا",
+        )
+
+        with self.assertRaises(ValidationError):
+            SubmissionAnswer(
+                submission=submission, question=foreign_question, answer_text="س"
+            ).full_clean()
+
+
+class SubmissionApiTests(APITestCase):
+    def setUp(self):
+        user_model = get_user_model()
+        self.manager = UserProfile.objects.create(
+            user=user_model.objects.create_user(username="manager", password="strong-pass-123"),
+            role=UserProfile.Role.MANAGER,
+        )
+        self.teacher_a = UserProfile.objects.create(
+            user=user_model.objects.create_user(username="teacher-a", password="strong-pass-123"),
+            role=UserProfile.Role.TEACHER,
+        )
+        self.teacher_b = UserProfile.objects.create(
+            user=user_model.objects.create_user(username="teacher-b", password="strong-pass-123"),
+            role=UserProfile.Role.TEACHER,
+        )
+        self.class_6a = make_classroom(self.teacher_a, "سادس أ")
+        self.class_5a = make_classroom(self.teacher_b, "خامس أ", subject="العلوم")
+        self.assessment_a = Assessment.objects.create(
+            classroom=self.class_6a, title="اختبار الكسور الأول"
+        )
+        self.assessment_b = Assessment.objects.create(
+            classroom=self.class_5a, title="اختبار الخلية"
+        )
+        self.question_a1 = self.make_question(self.assessment_a, 1, "ما ناتج 1/2 + 1/4؟", "3/4")
+        self.question_a2 = self.make_question(self.assessment_a, 2, "بسّط الكسر 4/8", "1/2")
+        self.question_b1 = self.make_question(self.assessment_b, 1, "ما وظيفة النواة؟", "تنظيم")
+        self.student_6a = Student.objects.create(
+            classroom=self.class_6a, internal_code="S-001", display_name="طالب أ"
+        )
+        self.student_5a = Student.objects.create(
+            classroom=self.class_5a, internal_code="S-900", display_name="طالب ب"
+        )
+
+    def make_question(self, assessment, order, text, model_answer):
+        return Question.objects.create(
+            assessment=assessment,
+            order=order,
+            text=text,
+            max_score=Decimal("2"),
+            model_answer=model_answer,
+        )
+
+    def authenticate(self, profile):
+        token = Token.objects.create(user=profile.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+
+    def submissions_url(self, assessment):
+        return f"/api/v1/assessments/{assessment.id}/submissions/"
+
+    def answers_url(self, assessment, submission):
+        return f"{self.submissions_url(assessment)}{submission.id}/answers/"
+
+    def make_submission(self, assessment, student):
+        return Submission.objects.create(assessment=assessment, student=student)
+
+    # ---------------------------------------------------------------- create
+
+    def test_teacher_creates_a_submission_for_a_student_in_the_assessment_classroom(self):
+        self.authenticate(self.teacher_a)
+        response = self.client.post(
+            self.submissions_url(self.assessment_a),
+            {"student_id": str(self.student_6a.id)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        submission = Submission.objects.get()
+        self.assertEqual(submission.student, self.student_6a)
+        self.assertEqual(submission.assessment, self.assessment_a)
+        self.assertEqual(submission.created_by, self.teacher_a)
+        self.assertEqual(response.data["student_code"], "S-001")
+        # Every question shows up so the entry screen renders in one round trip.
+        self.assertEqual(len(response.data["answers"]), 2)
+        self.assertEqual(response.data["answers"][0]["answer_text"], "")
+
+    def test_created_by_ignores_anything_the_client_sends(self):
+        self.authenticate(self.teacher_a)
+        response = self.client.post(
+            self.submissions_url(self.assessment_a),
+            {"student_id": str(self.student_6a.id), "created_by": str(self.teacher_b.id)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Submission.objects.get().created_by, self.teacher_a)
+
+    def test_duplicate_submission_for_the_same_student_is_rejected(self):
+        self.make_submission(self.assessment_a, self.student_6a)
+        self.authenticate(self.teacher_a)
+        response = self.client.post(
+            self.submissions_url(self.assessment_a),
+            {"student_id": str(self.student_6a.id)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("student_id", response.data)
+        self.assertEqual(Submission.objects.count(), 1)
+
+    def test_student_from_another_classroom_is_rejected(self):
+        self.authenticate(self.teacher_a)
+        response = self.client.post(
+            self.submissions_url(self.assessment_a),
+            {"student_id": str(self.student_5a.id)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("student_id", response.data)
+        self.assertFalse(Submission.objects.exists())
+
+    def test_teacher_cannot_create_a_submission_on_another_teachers_assessment(self):
+        self.authenticate(self.teacher_a)
+        response = self.client.post(
+            self.submissions_url(self.assessment_b),
+            {"student_id": str(self.student_5a.id)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(Submission.objects.exists())
+
+    # ------------------------------------------------------------------ read
+
+    def test_teacher_lists_submissions_of_their_own_assessment_only(self):
+        self.make_submission(self.assessment_a, self.student_6a)
+        self.make_submission(self.assessment_b, self.student_5a)
+        self.authenticate(self.teacher_a)
+        response = self.client.get(self.submissions_url(self.assessment_a))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual([item["student_code"] for item in response.data], ["S-001"])
+
+    def test_teacher_cannot_list_submissions_of_another_teachers_assessment(self):
+        self.make_submission(self.assessment_b, self.student_5a)
+        self.authenticate(self.teacher_a)
+        response = self.client.get(self.submissions_url(self.assessment_b))
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertNotContains(response, "S-900", status_code=status.HTTP_404_NOT_FOUND)
+
+    def test_teacher_cannot_retrieve_another_teachers_submission(self):
+        submission = self.make_submission(self.assessment_b, self.student_5a)
+        self.authenticate(self.teacher_a)
+        response = self.client.get(
+            f"{self.submissions_url(self.assessment_b)}{submission.id}/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_a_submission_cannot_be_reached_through_a_different_assessment(self):
+        submission = self.make_submission(self.assessment_b, self.student_5a)
+        self.authenticate(self.teacher_a)
+        response = self.client.get(
+            f"{self.submissions_url(self.assessment_a)}{submission.id}/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_detail_lists_every_question_in_order_with_current_answers(self):
+        submission = self.make_submission(self.assessment_a, self.student_6a)
+        SubmissionAnswer.objects.create(
+            submission=submission, question=self.question_a2, answer_text="1/2"
+        )
+        self.authenticate(self.teacher_a)
+        response = self.client.get(
+            f"{self.submissions_url(self.assessment_a)}{submission.id}/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["assessment_title"], "اختبار الكسور الأول")
+        self.assertEqual(response.data["student_name"], "طالب أ")
+        answers = response.data["answers"]
+        self.assertEqual([entry["order"] for entry in answers], [1, 2])
+        self.assertEqual(answers[0]["answer_text"], "")
+        self.assertEqual(answers[1]["answer_text"], "1/2")
+
+    # --------------------------------------------------------------- answers
+
+    def test_teacher_saves_answers_for_their_own_submission(self):
+        submission = self.make_submission(self.assessment_a, self.student_6a)
+        self.authenticate(self.teacher_a)
+        response = self.client.put(
+            self.answers_url(self.assessment_a, submission),
+            {
+                "answers": [
+                    {"question_id": str(self.question_a1.id), "answer_text": "3/4"},
+                    {"question_id": str(self.question_a2.id), "answer_text": "1/2"},
+                ]
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(submission.answers.count(), 2)
+        self.assertEqual(
+            submission.answers.get(question=self.question_a1).answer_text, "3/4"
+        )
+        self.assertEqual(
+            [entry["answer_text"] for entry in response.data["answers"]], ["3/4", "1/2"]
+        )
+
+    def test_saving_again_updates_the_existing_answer_instead_of_duplicating(self):
+        submission = self.make_submission(self.assessment_a, self.student_6a)
+        self.authenticate(self.teacher_a)
+        payload = {
+            "answers": [{"question_id": str(self.question_a1.id), "answer_text": "3/4"}]
+        }
+        self.client.put(
+            self.answers_url(self.assessment_a, submission), payload, format="json"
+        )
+        payload["answers"][0]["answer_text"] = "٣/٤ بعد التعديل"
+        response = self.client.put(
+            self.answers_url(self.assessment_a, submission), payload, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(submission.answers.count(), 1)
+        self.assertEqual(submission.answers.get().answer_text, "٣/٤ بعد التعديل")
+
+    def test_two_answers_for_the_same_question_in_one_payload_are_rejected(self):
+        submission = self.make_submission(self.assessment_a, self.student_6a)
+        self.authenticate(self.teacher_a)
+        response = self.client.put(
+            self.answers_url(self.assessment_a, submission),
+            {
+                "answers": [
+                    {"question_id": str(self.question_a1.id), "answer_text": "3/4"},
+                    {"question_id": str(self.question_a1.id), "answer_text": "1/2"},
+                ]
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(submission.answers.exists())
+
+    def test_question_from_another_assessment_is_rejected(self):
+        submission = self.make_submission(self.assessment_a, self.student_6a)
+        self.authenticate(self.teacher_a)
+        response = self.client.put(
+            self.answers_url(self.assessment_a, submission),
+            {
+                "answers": [
+                    {"question_id": str(self.question_b1.id), "answer_text": "تنظيم"}
+                ]
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(submission.answers.exists())
+
+    def test_a_rejected_payload_saves_nothing_at_all(self):
+        submission = self.make_submission(self.assessment_a, self.student_6a)
+        self.authenticate(self.teacher_a)
+        self.client.put(
+            self.answers_url(self.assessment_a, submission),
+            {
+                "answers": [
+                    {"question_id": str(self.question_a1.id), "answer_text": "3/4"},
+                    {"question_id": str(self.question_b1.id), "answer_text": "تنظيم"},
+                ]
+            },
+            format="json",
+        )
+
+        self.assertFalse(submission.answers.exists())
+
+    def test_blank_answers_are_allowed(self):
+        submission = self.make_submission(self.assessment_a, self.student_6a)
+        self.authenticate(self.teacher_a)
+        response = self.client.put(
+            self.answers_url(self.assessment_a, submission),
+            {"answers": [{"question_id": str(self.question_a1.id), "answer_text": ""}]},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(submission.answers.get().answer_text, "")
+
+    def test_teacher_cannot_save_answers_on_another_teachers_submission(self):
+        submission = self.make_submission(self.assessment_b, self.student_5a)
+        self.authenticate(self.teacher_a)
+        response = self.client.put(
+            self.answers_url(self.assessment_b, submission),
+            {
+                "answers": [
+                    {"question_id": str(self.question_b1.id), "answer_text": "تنظيم"}
+                ]
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(submission.answers.exists())
+
+    # --------------------------------------------------------------- manager
+
+    def test_manager_reads_submissions_across_classrooms(self):
+        self.make_submission(self.assessment_a, self.student_6a)
+        self.make_submission(self.assessment_b, self.student_5a)
+        self.authenticate(self.manager)
+
+        for assessment, code in ((self.assessment_a, "S-001"), (self.assessment_b, "S-900")):
+            response = self.client.get(self.submissions_url(assessment))
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual([item["student_code"] for item in response.data], [code])
+
+    def test_manager_creates_a_submission_on_another_teachers_assessment(self):
+        self.authenticate(self.manager)
+        response = self.client.post(
+            self.submissions_url(self.assessment_b),
+            {"student_id": str(self.student_5a.id)},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(Submission.objects.get().created_by, self.manager)
+
+    # -------------------------------------------------------------- accounts
+
+    def test_deactivated_teacher_is_rejected(self):
+        self.teacher_a.is_active = False
+        self.teacher_a.save(update_fields=["is_active"])
+        self.authenticate(self.teacher_a)
+        response = self.client.get(self.submissions_url(self.assessment_a))
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_anonymous_caller_is_rejected(self):
+        response = self.client.get(self.submissions_url(self.assessment_a))
 
         self.assertIn(
             response.status_code,

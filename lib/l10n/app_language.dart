@@ -226,6 +226,29 @@ class AppStrings {
   String totalScoreValue(double value) =>
       _('مجموع الدرجات: ${_score(value)}', 'Total score: ${_score(value)}');
 
+  // --------------------------------------------------------- submissions
+  String get studentSubmissions =>
+      _('تسليمات الطلاب', 'Student submissions');
+  String get submissionsHint => _(
+    'اختر طالبًا لإدخال إجاباته.',
+    'Pick a student to enter their answers.',
+  );
+  String get submissionEntered => _('تم الإدخال', 'Entered');
+  String get submissionNotEntered => _('لم يُدخل', 'Not entered');
+  String get noSubmissionsYet =>
+      _('لا توجد تسليمات بعد', 'No submissions yet');
+  String submissionsProgress(int entered, int total) => _(
+    'تم إدخال $entered من $total',
+    '$entered of $total entered',
+  );
+  String get studentAnswer => _('إجابة الطالب', 'Student answer');
+  String get saveAnswers => _('حفظ الإجابات', 'Save answers');
+  String get answersSaved => _('تم الحفظ', 'Saved');
+  String get noQuestionsInAssessment => _(
+    'لا توجد أسئلة في هذا الاختبار',
+    'No questions in this assessment',
+  );
+
   /// Scores come back as decimals so half marks survive, but whole numbers
   /// should still read as `2` rather than `2.00`.
   static String _score(double value) {
@@ -273,6 +296,14 @@ class AppStrings {
         'The maximum score must be greater than zero.',
     'ترتيب السؤال مستخدم داخل هذا الاختبار.':
         'That question order is already used in this assessment.',
+    'لهذا الطالب تسليم مسجل في هذا الاختبار.':
+        'This student already has a submission for this assessment.',
+    'السؤال لا ينتمي إلى هذا الاختبار.':
+        'That question does not belong to this assessment.',
+    'لا يمكن إرسال إجابتين لنفس السؤال.':
+        'Two answers cannot be sent for the same question.',
+    'الطالب لا ينتمي إلى صف هذا الاختبار.':
+        'That student does not belong to this assessment\'s classroom.',
     'غير موجود.': 'Not found.',
     'تعذر قراءة استجابة الخادم.': 'The server response could not be read.',
     'تعذر إكمال الطلب. حاول مرة أخرى.':

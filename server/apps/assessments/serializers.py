@@ -1,10 +1,11 @@
 from decimal import Decimal
 
+from django.db import transaction
 from rest_framework import serializers
 
-from apps.classrooms.models import Classroom
+from apps.classrooms.models import Classroom, Student
 
-from .models import Assessment, Question
+from .models import Assessment, Question, Submission, SubmissionAnswer
 
 
 class QuestionSerializer(serializers.ModelSerializer):
@@ -91,3 +92,108 @@ class AssessmentDetailSerializer(AssessmentSerializer):
 
     class Meta(AssessmentSerializer.Meta):
         fields = AssessmentSerializer.Meta.fields + ("questions",)
+
+
+class SubmissionSerializer(serializers.ModelSerializer):
+    student_id = serializers.PrimaryKeyRelatedField(
+        source="student",
+        queryset=Student.objects.none(),
+    )
+    student_name = serializers.CharField(source="student.display_name", read_only=True)
+    student_code = serializers.CharField(source="student.internal_code", read_only=True)
+
+    class Meta:
+        model = Submission
+        fields = ("id", "student_id", "student_name", "student_code", "created_at")
+        read_only_fields = ("id", "created_at")
+
+    def get_fields(self):
+        fields = super().get_fields()
+        assessment = self.context.get("assessment")
+        # Only the roster of the assessment's own classroom is selectable, so a
+        # student from another class can never be attached to it.
+        fields["student_id"].queryset = (
+            Student.objects.filter(classroom=assessment.classroom)
+            if assessment is not None
+            else Student.objects.none()
+        )
+        return fields
+
+    def validate(self, attrs):
+        # The unique constraint would raise a 500; catching it here makes the
+        # duplicate a plain validation error instead.
+        assessment = self.context["assessment"]
+        if Submission.objects.filter(
+            assessment=assessment, student=attrs["student"]
+        ).exists():
+            raise serializers.ValidationError(
+                {"student_id": "لهذا الطالب تسليم مسجل في هذا الاختبار."}
+            )
+        return attrs
+
+
+class SubmissionDetailSerializer(SubmissionSerializer):
+    """Carries every question of the assessment, answered or not, so the entry
+    screen can render the whole form from a single response."""
+
+    assessment_id = serializers.UUIDField(source="assessment.id", read_only=True)
+    assessment_title = serializers.CharField(source="assessment.title", read_only=True)
+    answers = serializers.SerializerMethodField()
+
+    class Meta(SubmissionSerializer.Meta):
+        fields = SubmissionSerializer.Meta.fields + (
+            "assessment_id",
+            "assessment_title",
+            "answers",
+        )
+
+    def get_answers(self, submission):
+        texts = {
+            answer.question_id: answer.answer_text for answer in submission.answers.all()
+        }
+        return [
+            {
+                "question_id": str(question.id),
+                "order": question.order,
+                "text": question.text,
+                "max_score": question.max_score,
+                "answer_text": texts.get(question.id, ""),
+            }
+            for question in submission.assessment.questions.all()
+        ]
+
+
+class AnswerInputSerializer(serializers.Serializer):
+    question_id = serializers.UUIDField()
+    answer_text = serializers.CharField(allow_blank=True, trim_whitespace=False)
+
+
+class AnswerBulkWriteSerializer(serializers.Serializer):
+    """Saves the whole answer sheet in one call: existing answers are updated,
+    missing ones are created, so the client never tracks answer ids."""
+
+    answers = AnswerInputSerializer(many=True, allow_empty=True)
+
+    def validate_answers(self, value):
+        submission = self.context["submission"]
+        allowed = set(submission.assessment.questions.values_list("id", flat=True))
+        seen = set()
+        for entry in value:
+            question_id = entry["question_id"]
+            if question_id not in allowed:
+                raise serializers.ValidationError("السؤال لا ينتمي إلى هذا الاختبار.")
+            if question_id in seen:
+                raise serializers.ValidationError("لا يمكن إرسال إجابتين لنفس السؤال.")
+            seen.add(question_id)
+        return value
+
+    @transaction.atomic
+    def save(self, **kwargs):
+        submission = self.context["submission"]
+        for entry in self.validated_data["answers"]:
+            SubmissionAnswer.objects.update_or_create(
+                submission=submission,
+                question_id=entry["question_id"],
+                defaults={"answer_text": entry["answer_text"]},
+            )
+        return submission

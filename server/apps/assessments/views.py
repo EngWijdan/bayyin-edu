@@ -6,7 +6,14 @@ from rest_framework.views import APIView
 from apps.accounts.permissions import IsActiveSchoolMember, active_profile
 
 from .models import Assessment
-from .serializers import AssessmentDetailSerializer, AssessmentSerializer, QuestionSerializer
+from .serializers import (
+    AnswerBulkWriteSerializer,
+    AssessmentDetailSerializer,
+    AssessmentSerializer,
+    QuestionSerializer,
+    SubmissionDetailSerializer,
+    SubmissionSerializer,
+)
 
 
 class ScopedAssessmentView(APIView):
@@ -107,3 +114,68 @@ class AssessmentQuestionDetailView(ScopedAssessmentView):
         _, question = self.get_question(request, assessment_id, question_id)
         question.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class ScopedSubmissionView(ScopedAssessmentView):
+    """Submissions inherit the assessment's scope: an assessment the caller
+    cannot see is already a 404, so everything under it is out of reach."""
+
+    def get_submission(self, request, assessment_id, submission_id):
+        assessment = self.get_assessment(request, assessment_id)
+        submission = get_object_or_404(
+            assessment.submissions.select_related(
+                "student", "assessment"
+            ).prefetch_related("answers"),
+            id=submission_id,
+        )
+        return assessment, submission
+
+
+class SubmissionListCreateView(ScopedSubmissionView):
+    def get(self, request, assessment_id):
+        assessment = self.get_assessment(request, assessment_id)
+        submissions = assessment.submissions.select_related("student")
+        return Response(SubmissionSerializer(submissions, many=True).data)
+
+    def post(self, request, assessment_id):
+        assessment = self.get_assessment(request, assessment_id)
+        context = {"assessment": assessment}
+        serializer = SubmissionSerializer(data=request.data, context=context)
+        serializer.is_valid(raise_exception=True)
+        submission = serializer.save(
+            assessment=assessment, created_by=active_profile(request)
+        )
+        return Response(
+            SubmissionDetailSerializer(submission, context=context).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class SubmissionDetailView(ScopedSubmissionView):
+    def get(self, request, assessment_id, submission_id):
+        assessment, submission = self.get_submission(
+            request, assessment_id, submission_id
+        )
+        return Response(
+            SubmissionDetailSerializer(
+                submission, context={"assessment": assessment}
+            ).data
+        )
+
+
+class SubmissionAnswersView(ScopedSubmissionView):
+    def put(self, request, assessment_id, submission_id):
+        assessment, submission = self.get_submission(
+            request, assessment_id, submission_id
+        )
+        serializer = AnswerBulkWriteSerializer(
+            data=request.data, context={"submission": submission}
+        )
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        submission.refresh_from_db()
+        return Response(
+            SubmissionDetailSerializer(
+                submission, context={"assessment": assessment}
+            ).data
+        )

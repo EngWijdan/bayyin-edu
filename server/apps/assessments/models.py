@@ -1,11 +1,12 @@
 import uuid
 from decimal import Decimal
 
+from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
 
 from apps.accounts.models import UserProfile
-from apps.classrooms.models import Classroom
+from apps.classrooms.models import Classroom, Student
 
 
 class AssessmentQuerySet(models.QuerySet):
@@ -91,3 +92,109 @@ class Question(models.Model):
 
     def __str__(self) -> str:
         return f"{self.order}. {self.text[:40]}"
+
+
+class SubmissionQuerySet(models.QuerySet):
+    def visible_to(self, profile):
+        """Managers see every submission; a teacher only sees the ones on their own assessments."""
+        if profile is None:
+            return self.none()
+        if profile.is_manager:
+            return self
+        return self.filter(assessment__classroom__teacher=profile)
+
+
+class Submission(models.Model):
+    """One student's attempt at one assessment. Answers hang off it."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    assessment = models.ForeignKey(
+        Assessment,
+        on_delete=models.CASCADE,
+        related_name="submissions",
+        verbose_name="الاختبار",
+    )
+    student = models.ForeignKey(
+        Student,
+        on_delete=models.CASCADE,
+        related_name="submissions",
+        verbose_name="الطالب",
+    )
+    created_by = models.ForeignKey(
+        UserProfile,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_submissions",
+        verbose_name="أنشئ بواسطة",
+    )
+    created_at = models.DateTimeField("تاريخ الإنشاء", auto_now_add=True)
+    updated_at = models.DateTimeField("آخر تحديث", auto_now=True)
+
+    objects = SubmissionQuerySet.as_manager()
+
+    class Meta:
+        verbose_name = "تسليم"
+        verbose_name_plural = "التسليمات"
+        ordering = ("student__internal_code",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("assessment", "student"),
+                name="unique_submission_per_student_and_assessment",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.student} - {self.assessment.title}"
+
+    def clean(self):
+        """Guards the admin and any direct ORM use; the API checks this too."""
+        super().clean()
+        if (
+            self.assessment_id
+            and self.student_id
+            and self.student.classroom_id != self.assessment.classroom_id
+        ):
+            raise ValidationError({"student": "الطالب لا ينتمي إلى صف هذا الاختبار."})
+
+
+class SubmissionAnswer(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    submission = models.ForeignKey(
+        Submission,
+        on_delete=models.CASCADE,
+        related_name="answers",
+        verbose_name="التسليم",
+    )
+    question = models.ForeignKey(
+        Question,
+        on_delete=models.CASCADE,
+        related_name="answers",
+        verbose_name="السؤال",
+    )
+    answer_text = models.TextField("إجابة الطالب", blank=True)
+    created_at = models.DateTimeField("تاريخ الإنشاء", auto_now_add=True)
+    updated_at = models.DateTimeField("آخر تحديث", auto_now=True)
+
+    class Meta:
+        verbose_name = "إجابة"
+        verbose_name_plural = "الإجابات"
+        ordering = ("question__order",)
+        constraints = [
+            models.UniqueConstraint(
+                fields=("submission", "question"),
+                name="unique_answer_per_question_and_submission",
+            )
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.submission} - {self.question.order}"
+
+    def clean(self):
+        super().clean()
+        if (
+            self.submission_id
+            and self.question_id
+            and self.question.assessment_id != self.submission.assessment_id
+        ):
+            raise ValidationError({"question": "السؤال لا ينتمي إلى هذا الاختبار."})

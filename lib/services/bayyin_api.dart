@@ -200,6 +200,67 @@ class AssessmentRecord {
   final List<QuestionRecord> questions;
 }
 
+/// One question of the assessment paired with what the student answered.
+/// The backend returns an entry for every question, so [answerText] is empty
+/// rather than absent when nothing has been entered yet.
+class AnswerRecord {
+  const AnswerRecord({
+    required this.questionId,
+    required this.order,
+    required this.text,
+    required this.maxScore,
+    required this.answerText,
+  });
+
+  factory AnswerRecord.fromJson(Map<String, dynamic> json) => AnswerRecord(
+    questionId: json['question_id'].toString(),
+    order: json['order'] as int? ?? 0,
+    text: json['text'] as String? ?? '',
+    maxScore: (json['max_score'] as num?)?.toDouble() ?? 0,
+    answerText: json['answer_text'] as String? ?? '',
+  );
+
+  final String questionId;
+  final int order;
+  final String text;
+  final double maxScore;
+  final String answerText;
+}
+
+/// A student's submission. The list endpoint omits [assessmentTitle] and
+/// [answers]; the detail and save endpoints fill them in.
+class SubmissionRecord {
+  const SubmissionRecord({
+    required this.id,
+    required this.studentId,
+    required this.studentName,
+    required this.studentCode,
+    this.assessmentTitle = '',
+    this.answers = const [],
+  });
+
+  factory SubmissionRecord.fromJson(Map<String, dynamic> json) =>
+      SubmissionRecord(
+        id: json['id'].toString(),
+        studentId: json['student_id'].toString(),
+        studentName: json['student_name'] as String? ?? '',
+        studentCode: json['student_code'] as String? ?? '',
+        assessmentTitle: json['assessment_title'] as String? ?? '',
+        answers: ((json['answers'] as List<dynamic>?) ?? [])
+            .map((item) => AnswerRecord.fromJson(item as Map<String, dynamic>))
+            .toList(),
+      );
+
+  final String id;
+  final String studentId;
+  final String studentName;
+  final String studentCode;
+  final String assessmentTitle;
+  final List<AnswerRecord> answers;
+
+  bool get hasName => studentName.trim().isNotEmpty;
+}
+
 class ApiException implements Exception, ApiErrorMessage {
   const ApiException(this.message);
   @override
@@ -254,6 +315,28 @@ abstract class BayyinGateway {
     required String text,
     required double maxScore,
     required String modelAnswer,
+  });
+  Future<List<SubmissionRecord>> fetchSubmissions({
+    required String token,
+    required String assessmentId,
+  });
+  Future<SubmissionRecord> fetchSubmission({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+  });
+  Future<SubmissionRecord> createSubmission({
+    required String token,
+    required String assessmentId,
+    required String studentId,
+  });
+
+  /// Saves the whole answer sheet at once, keyed by question id.
+  Future<SubmissionRecord> saveAnswers({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+    required Map<String, String> answersByQuestionId,
   });
   Future<void> logout(String token);
 }
@@ -460,6 +543,79 @@ class BayyinApi implements BayyinGateway {
     final data = _decode(response);
     if (response.statusCode != 201) throw ApiException(_errorMessage(data));
     return QuestionRecord.fromJson(data);
+  }
+
+  @override
+  Future<List<SubmissionRecord>> fetchSubmissions({
+    required String token,
+    required String assessmentId,
+  }) async {
+    final response = await _client.get(
+      Uri.parse('$baseUrl/api/v1/assessments/$assessmentId/submissions/'),
+      headers: _authorizedHeaders(token),
+    );
+    final data = _decodeAny(response);
+    if (response.statusCode != 200) throw ApiException(_errorMessage(data));
+    return (data as List<dynamic>)
+        .map((item) => SubmissionRecord.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  @override
+  Future<SubmissionRecord> fetchSubmission({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+  }) async {
+    final response = await _client.get(
+      Uri.parse(
+        '$baseUrl/api/v1/assessments/$assessmentId/submissions/$submissionId/',
+      ),
+      headers: _authorizedHeaders(token),
+    );
+    final data = _decode(response);
+    if (response.statusCode != 200) throw ApiException(_errorMessage(data));
+    return SubmissionRecord.fromJson(data);
+  }
+
+  @override
+  Future<SubmissionRecord> createSubmission({
+    required String token,
+    required String assessmentId,
+    required String studentId,
+  }) async {
+    final response = await _client.post(
+      Uri.parse('$baseUrl/api/v1/assessments/$assessmentId/submissions/'),
+      headers: _authorizedHeaders(token),
+      body: jsonEncode({'student_id': studentId}),
+    );
+    final data = _decode(response);
+    if (response.statusCode != 201) throw ApiException(_errorMessage(data));
+    return SubmissionRecord.fromJson(data);
+  }
+
+  @override
+  Future<SubmissionRecord> saveAnswers({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+    required Map<String, String> answersByQuestionId,
+  }) async {
+    final response = await _client.put(
+      Uri.parse(
+        '$baseUrl/api/v1/assessments/$assessmentId/submissions/$submissionId/answers/',
+      ),
+      headers: _authorizedHeaders(token),
+      body: jsonEncode({
+        'answers': [
+          for (final entry in answersByQuestionId.entries)
+            {'question_id': entry.key, 'answer_text': entry.value},
+        ],
+      }),
+    );
+    final data = _decode(response);
+    if (response.statusCode != 200) throw ApiException(_errorMessage(data));
+    return SubmissionRecord.fromJson(data);
   }
 
   @override

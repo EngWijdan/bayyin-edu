@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import Assessment, Question
+from .models import Assessment, Question, Submission, SubmissionAnswer
 
 
 class QuestionInline(admin.TabularInline):
@@ -24,4 +24,30 @@ class QuestionAdmin(admin.ModelAdmin):
     list_display = ("order", "text", "max_score", "assessment")
     list_filter = ("assessment__classroom__subject",)
     search_fields = ("text", "assessment__title")
+    readonly_fields = ("created_at", "updated_at")
+
+
+class SubmissionAnswerInline(admin.TabularInline):
+    model = SubmissionAnswer
+    extra = 0
+    fields = ("question", "answer_text")
+
+
+@admin.register(Submission)
+class SubmissionAdmin(admin.ModelAdmin):
+    list_display = ("student", "assessment", "created_by", "created_at")
+    list_filter = ("assessment__classroom__subject",)
+    search_fields = (
+        "student__internal_code",
+        "student__display_name",
+        "assessment__title",
+    )
+    readonly_fields = ("created_at", "updated_at")
+    inlines = (SubmissionAnswerInline,)
+
+
+@admin.register(SubmissionAnswer)
+class SubmissionAnswerAdmin(admin.ModelAdmin):
+    list_display = ("submission", "question", "answer_text")
+    search_fields = ("answer_text", "submission__student__internal_code")
     readonly_fields = ("created_at", "updated_at")
