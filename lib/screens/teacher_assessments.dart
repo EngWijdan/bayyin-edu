@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../l10n/app_language.dart';
+import '../services/attachment_picker.dart';
 import '../services/bayyin_api.dart';
 import '../widgets/async_states.dart';
 import 'assessment_details.dart';
@@ -11,11 +12,13 @@ class TeacherAssessmentsPage extends StatefulWidget {
   const TeacherAssessmentsPage({
     super.key,
     required this.gateway,
+    required this.picker,
     required this.token,
     required this.classrooms,
   });
 
   final BayyinGateway gateway;
+  final AttachmentPicker picker;
   final String token;
 
   /// The only classrooms a new assessment may be attached to.
@@ -121,6 +124,7 @@ class _TeacherAssessmentsPageState extends State<TeacherAssessmentsPage> {
       MaterialPageRoute(
         builder: (_) => AssessmentDetailsPage(
           gateway: widget.gateway,
+          picker: widget.picker,
           token: widget.token,
           assessment: assessment,
         ),

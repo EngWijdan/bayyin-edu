@@ -1,9 +1,15 @@
+import shutil
+import tempfile
 from decimal import Decimal
+from pathlib import Path
 
+from django.conf import settings
 from django.contrib.auth import get_user_model
 from django.core.exceptions import ValidationError
-from django.db import IntegrityError, transaction
-from django.test import TestCase
+from django.core.files.uploadedfile import SimpleUploadedFile
+from django.core.signals import request_finished
+from django.db import IntegrityError, close_old_connections, transaction
+from django.test import TestCase, override_settings
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
@@ -11,7 +17,13 @@ from rest_framework.test import APITestCase
 from apps.accounts.models import UserProfile
 from apps.classrooms.models import Classroom, Student
 
-from .models import Assessment, Question, Submission, SubmissionAnswer
+from .models import (
+    Assessment,
+    Question,
+    Submission,
+    SubmissionAnswer,
+    SubmissionAttachment,
+)
 
 
 def make_classroom(teacher, name, subject="الرياضيات"):
@@ -824,6 +836,363 @@ class SubmissionApiTests(APITestCase):
 
     def test_anonymous_caller_is_rejected(self):
         response = self.client.get(self.submissions_url(self.assessment_a))
+
+        self.assertIn(
+            response.status_code,
+            (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+        )
+
+
+def jpeg_bytes(padding=32):
+    return b"\xff\xd8\xff\xe0" + b"\x00" * padding + b"\xff\xd9"
+
+
+def png_bytes(padding=32):
+    return b"\x89PNG\r\n\x1a\n" + b"\x00" * padding
+
+
+def pdf_bytes(padding=32):
+    return b"%PDF-1.4\n" + b"0" * padding + b"%%EOF\n"
+
+
+TEST_MEDIA_ROOT = tempfile.mkdtemp(prefix="bayyin-test-media-")
+
+
+def read_streamed(response):
+    """Draining a streaming response makes the test client fire
+    request_finished, which would close the connection this test's transaction
+    is running on, so hold that handler off until the body is read."""
+    request_finished.disconnect(close_old_connections)
+    try:
+        return b"".join(response.streaming_content)
+    finally:
+        request_finished.connect(close_old_connections)
+
+
+@override_settings(MEDIA_ROOT=TEST_MEDIA_ROOT)
+class SubmissionAttachmentApiTests(APITestCase):
+    """Uploading, listing and deleting the photo or PDF of a student's paper."""
+
+    @classmethod
+    def tearDownClass(cls):
+        super().tearDownClass()
+        shutil.rmtree(TEST_MEDIA_ROOT, ignore_errors=True)
+
+    def setUp(self):
+        user_model = get_user_model()
+        self.manager = UserProfile.objects.create(
+            user=user_model.objects.create_user(username="manager", password="strong-pass-123"),
+            role=UserProfile.Role.MANAGER,
+        )
+        self.teacher_a = UserProfile.objects.create(
+            user=user_model.objects.create_user(username="teacher-a", password="strong-pass-123"),
+            role=UserProfile.Role.TEACHER,
+        )
+        self.teacher_b = UserProfile.objects.create(
+            user=user_model.objects.create_user(username="teacher-b", password="strong-pass-123"),
+            role=UserProfile.Role.TEACHER,
+        )
+        self.class_6a = make_classroom(self.teacher_a, "سادس أ")
+        self.class_5a = make_classroom(self.teacher_b, "خامس أ", subject="العلوم")
+        self.assessment_a = Assessment.objects.create(
+            classroom=self.class_6a, title="اختبار الكسور الأول"
+        )
+        self.assessment_b = Assessment.objects.create(
+            classroom=self.class_5a, title="اختبار الخلية"
+        )
+        self.submission_a = Submission.objects.create(
+            assessment=self.assessment_a,
+            student=Student.objects.create(
+                classroom=self.class_6a, internal_code="S-001", display_name="طالب أ"
+            ),
+        )
+        self.submission_b = Submission.objects.create(
+            assessment=self.assessment_b,
+            student=Student.objects.create(
+                classroom=self.class_5a, internal_code="S-900"
+            ),
+        )
+
+    def authenticate(self, profile):
+        token = Token.objects.create(user=profile.user)
+        self.client.credentials(HTTP_AUTHORIZATION=f"Token {token.key}")
+
+    def attachments_url(self, assessment, submission):
+        return (
+            f"/api/v1/assessments/{assessment.id}"
+            f"/submissions/{submission.id}/attachments/"
+        )
+
+    def upload(self, assessment, submission, filename, content, declared="image/jpeg"):
+        return self.client.post(
+            self.attachments_url(assessment, submission),
+            {"file": SimpleUploadedFile(filename, content, content_type=declared)},
+            format="multipart",
+        )
+
+    def attach(self, submission, filename="paper.jpg"):
+        """Creates an attachment straight through the ORM."""
+        return SubmissionAttachment.objects.create(
+            submission=submission,
+            file=SimpleUploadedFile(filename, jpeg_bytes()),
+            original_filename=filename,
+            content_type="image/jpeg",
+            file_size=len(jpeg_bytes()),
+        )
+
+    # ---------------------------------------------------------------- upload
+
+    def test_teacher_uploads_a_jpeg_to_their_own_submission(self):
+        self.authenticate(self.teacher_a)
+        response = self.upload(
+            self.assessment_a, self.submission_a, "ورقة.jpg", jpeg_bytes()
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        attachment = self.submission_a.attachments.get()
+        self.assertEqual(attachment.original_filename, "ورقة.jpg")
+        self.assertEqual(attachment.content_type, "image/jpeg")
+        self.assertEqual(attachment.file_size, len(jpeg_bytes()))
+        self.assertEqual(attachment.created_by, self.teacher_a)
+        self.assertTrue(Path(attachment.file.path).exists())
+
+    def test_teacher_uploads_a_png(self):
+        self.authenticate(self.teacher_a)
+        response = self.upload(
+            self.assessment_a, self.submission_a, "page.png", png_bytes(), "image/png"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(self.submission_a.attachments.get().content_type, "image/png")
+
+    def test_teacher_uploads_a_pdf(self):
+        self.authenticate(self.teacher_a)
+        response = self.upload(
+            self.assessment_a,
+            self.submission_a,
+            "paper.pdf",
+            pdf_bytes(),
+            "application/pdf",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            self.submission_a.attachments.get().content_type, "application/pdf"
+        )
+
+    def test_the_stored_name_is_generated_not_the_client_filename(self):
+        self.authenticate(self.teacher_a)
+        self.upload(
+            self.assessment_a, self.submission_a, "../../evil name.jpg", jpeg_bytes()
+        )
+
+        attachment = self.submission_a.attachments.get()
+        stored = Path(attachment.file.name)
+        self.assertNotIn("evil", stored.name)
+        self.assertEqual(stored.suffix, ".jpg")
+        self.assertEqual(stored.parent.name, str(self.submission_a.id))
+        # The client's name survives for display only.
+        self.assertEqual(attachment.original_filename, "evil name.jpg")
+
+    # ------------------------------------------------------------ validation
+
+    def test_unsupported_extension_is_rejected(self):
+        self.authenticate(self.teacher_a)
+        response = self.upload(
+            self.assessment_a, self.submission_a, "notes.txt", b"hello there"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(self.submission_a.attachments.exists())
+
+    def test_a_supported_extension_over_the_wrong_bytes_is_rejected(self):
+        self.authenticate(self.teacher_a)
+        response = self.upload(
+            self.assessment_a, self.submission_a, "paper.png", pdf_bytes(), "image/png"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(self.submission_a.attachments.exists())
+
+    def test_a_declared_content_type_alone_does_not_get_a_file_in(self):
+        self.authenticate(self.teacher_a)
+        response = self.upload(
+            self.assessment_a, self.submission_a, "script.sh", jpeg_bytes(), "image/jpeg"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(self.submission_a.attachments.exists())
+
+    @override_settings(SUBMISSION_ATTACHMENT_MAX_BYTES=64)
+    def test_oversized_file_is_rejected(self):
+        self.authenticate(self.teacher_a)
+        response = self.upload(
+            self.assessment_a, self.submission_a, "big.jpg", jpeg_bytes(padding=512)
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertFalse(self.submission_a.attachments.exists())
+
+    def test_the_configured_limit_is_ten_megabytes(self):
+        self.assertEqual(settings.SUBMISSION_ATTACHMENT_MAX_BYTES, 10 * 1024 * 1024)
+
+    # -------------------------------------------------------------- multiple
+
+    def test_a_submission_accepts_several_files_in_upload_order(self):
+        self.authenticate(self.teacher_a)
+        for name, content in (
+            ("page-1.jpg", jpeg_bytes()),
+            ("page-2.png", png_bytes()),
+            ("page-3.pdf", pdf_bytes()),
+        ):
+            created = self.upload(self.assessment_a, self.submission_a, name, content)
+            self.assertEqual(created.status_code, status.HTTP_201_CREATED)
+
+        response = self.client.get(
+            self.attachments_url(self.assessment_a, self.submission_a)
+        )
+
+        self.assertEqual(
+            [item["original_filename"] for item in response.data],
+            ["page-1.jpg", "page-2.png", "page-3.pdf"],
+        )
+
+    # ------------------------------------------------------------------ read
+
+    def test_teacher_lists_attachments_of_their_own_submission(self):
+        self.attach(self.submission_a, "ورقة.jpg")
+        self.authenticate(self.teacher_a)
+        response = self.client.get(
+            self.attachments_url(self.assessment_a, self.submission_a)
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["original_filename"], "ورقة.jpg")
+        self.assertNotIn("file", response.data[0])
+
+    def test_teacher_cannot_list_another_teachers_attachments(self):
+        self.attach(self.submission_b, "secret.jpg")
+        self.authenticate(self.teacher_a)
+        response = self.client.get(
+            self.attachments_url(self.assessment_b, self.submission_b)
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertNotContains(response, "secret", status_code=status.HTTP_404_NOT_FOUND)
+
+    def test_teacher_cannot_upload_to_another_teachers_submission(self):
+        self.authenticate(self.teacher_a)
+        response = self.upload(
+            self.assessment_b, self.submission_b, "paper.jpg", jpeg_bytes()
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertFalse(self.submission_b.attachments.exists())
+
+    def test_teacher_downloads_their_own_attachment(self):
+        attachment = self.attach(self.submission_a)
+        self.authenticate(self.teacher_a)
+        response = self.client.get(
+            f"{self.attachments_url(self.assessment_a, self.submission_a)}"
+            f"{attachment.id}/download/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(read_streamed(response), jpeg_bytes())
+
+    def test_teacher_cannot_download_another_teachers_attachment(self):
+        attachment = self.attach(self.submission_b)
+        self.authenticate(self.teacher_a)
+        response = self.client.get(
+            f"{self.attachments_url(self.assessment_b, self.submission_b)}"
+            f"{attachment.id}/download/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    # ---------------------------------------------------------------- delete
+
+    def test_teacher_deletes_their_own_attachment_and_its_file(self):
+        attachment = self.attach(self.submission_a)
+        stored = Path(attachment.file.path)
+        self.assertTrue(stored.exists())
+        self.authenticate(self.teacher_a)
+        response = self.client.delete(
+            f"{self.attachments_url(self.assessment_a, self.submission_a)}"
+            f"{attachment.id}/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(SubmissionAttachment.objects.filter(id=attachment.id).exists())
+        self.assertFalse(stored.exists())
+
+    def test_teacher_cannot_delete_another_teachers_attachment(self):
+        attachment = self.attach(self.submission_b)
+        self.authenticate(self.teacher_a)
+        response = self.client.delete(
+            f"{self.attachments_url(self.assessment_b, self.submission_b)}"
+            f"{attachment.id}/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(SubmissionAttachment.objects.filter(id=attachment.id).exists())
+
+    def test_an_attachment_cannot_be_deleted_through_another_submissions_url(self):
+        attachment = self.attach(self.submission_b)
+        # The manager can reach both submissions, so only the id/URL mismatch
+        # can be what rejects this.
+        self.authenticate(self.manager)
+        response = self.client.delete(
+            f"{self.attachments_url(self.assessment_a, self.submission_a)}"
+            f"{attachment.id}/"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertTrue(SubmissionAttachment.objects.filter(id=attachment.id).exists())
+
+    def test_deleting_the_submission_removes_the_attachment_files_too(self):
+        attachment = self.attach(self.submission_a)
+        stored = Path(attachment.file.path)
+
+        self.submission_a.delete()
+
+        self.assertFalse(SubmissionAttachment.objects.exists())
+        self.assertFalse(stored.exists())
+
+    # --------------------------------------------------------------- manager
+
+    def test_manager_reaches_attachments_across_classrooms(self):
+        self.attach(self.submission_a, "6a.jpg")
+        self.attach(self.submission_b, "5a.jpg")
+        self.authenticate(self.manager)
+
+        for assessment, submission, name in (
+            (self.assessment_a, self.submission_a, "6a.jpg"),
+            (self.assessment_b, self.submission_b, "5a.jpg"),
+        ):
+            response = self.client.get(self.attachments_url(assessment, submission))
+            self.assertEqual(response.status_code, status.HTTP_200_OK)
+            self.assertEqual(
+                [item["original_filename"] for item in response.data], [name]
+            )
+
+    # -------------------------------------------------------------- accounts
+
+    def test_deactivated_teacher_is_rejected(self):
+        self.teacher_a.is_active = False
+        self.teacher_a.save(update_fields=["is_active"])
+        self.authenticate(self.teacher_a)
+        response = self.client.get(
+            self.attachments_url(self.assessment_a, self.submission_a)
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+
+    def test_anonymous_caller_is_rejected(self):
+        response = self.client.get(
+            self.attachments_url(self.assessment_a, self.submission_a)
+        )
 
         self.assertIn(
             response.status_code,

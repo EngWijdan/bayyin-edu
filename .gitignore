@@ -31,6 +31,7 @@ migrate_working_dir/
 .env
 server/__pycache__/
 server/**/__pycache__/
+server/media/
 server/.pytest_cache/
 .pub-cache/
 .pub/

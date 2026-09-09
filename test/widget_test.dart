@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:typed_data';
 
 import 'package:bayyin_teacher/l10n/app_language.dart';
 import 'package:bayyin_teacher/main.dart';
+import 'package:bayyin_teacher/services/attachment_picker.dart';
 import 'package:bayyin_teacher/services/bayyin_api.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -742,6 +744,7 @@ void main() {
         assessments: [_fractionsAssessment],
         students: _roster,
       );
+      _useTallViewport(tester);
       await tester.pumpWidget(BayyinApp(gateway: gateway));
       await _reachSubmissions(
         tester,
@@ -817,6 +820,7 @@ void main() {
         students: _roster,
         submissions: [_existingSubmission],
       );
+      _useTallViewport(tester);
       await tester.pumpWidget(BayyinApp(gateway: gateway));
       await _reachSubmissions(
         tester,
@@ -870,6 +874,7 @@ void main() {
     });
 
     testWidgets('enters and saves answers in English', (tester) async {
+      _useTallViewport(tester);
       await tester.pumpWidget(
         BayyinApp(
           gateway: FakeGateway(
@@ -899,6 +904,260 @@ void main() {
 
       expect(find.text('Saved'), findsOneWidget);
       await _settleSnackBars(tester);
+    });
+  });
+
+  group('مرفقات ورقة الطالب', () {
+    FakeGateway gatewayWith({
+      List<AttachmentRecord> attachments = const [],
+      Object? uploadError,
+      Completer<void>? uploadGate,
+    }) => FakeGateway(
+      role: 'TEACHER',
+      classrooms: [_classroom6a],
+      assessments: [_fractionsAssessment],
+      students: _roster,
+      submissions: [_existingSubmission],
+      attachments: attachments,
+      uploadError: uploadError,
+      uploadGate: uploadGate,
+    );
+
+    Future<void> openArabicEntry(WidgetTester tester) => _reachEntry(
+      tester,
+      signIn: 'تسجيل الدخول',
+      assessments: 'الاختبارات',
+      submissions: 'تسليمات الطلاب',
+    );
+
+    testWidgets('تعرض حالة عدم وجود ملفات', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(gateway: gatewayWith(), picker: FakeAttachmentPicker()),
+      );
+      await openArabicEntry(tester);
+
+      expect(find.text('ورقة الطالب'), findsOneWidget);
+      expect(find.text('لا توجد ملفات مرفوعة'), findsOneWidget);
+      expect(find.text('إضافة ملف'), findsOneWidget);
+    });
+
+    testWidgets('تعرض الملفات المرفوعة باسمها ونوعها وحجمها', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: gatewayWith(attachments: [_existingAttachment]),
+          picker: FakeAttachmentPicker(),
+        ),
+      );
+      await openArabicEntry(tester);
+
+      expect(find.text('ورقة-الطالب.jpg'), findsOneWidget);
+      expect(find.text('JPEG · 2 كيلوبايت'), findsOneWidget);
+      expect(find.text('لا توجد ملفات مرفوعة'), findsNothing);
+    });
+
+    testWidgets('تعرض حالة الرفع حتى يرد الخادم', (tester) async {
+      final gate = Completer<void>();
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: gatewayWith(uploadGate: gate),
+          picker: FakeAttachmentPicker(filename: 'page.png'),
+        ),
+      );
+      await openArabicEntry(tester);
+      await tester.tap(find.text('إضافة ملف'));
+      await tester.pump();
+      await tester.pump();
+
+      expect(find.text('جاري الرفع…'), findsOneWidget);
+      expect(find.text('إضافة ملف'), findsNothing);
+
+      gate.complete();
+      await tester.pumpAndSettle();
+
+      expect(find.text('page.png'), findsOneWidget);
+      expect(find.text('إضافة ملف'), findsOneWidget);
+      await _settleSnackBars(tester);
+    });
+
+    testWidgets('ترفع ملفًا وتضيفه إلى القائمة', (tester) async {
+      final gateway = gatewayWith();
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: gateway,
+          picker: FakeAttachmentPicker(filename: 'صفحة-2.pdf'),
+        ),
+      );
+      await openArabicEntry(tester);
+      await tester.tap(find.text('إضافة ملف'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('صفحة-2.pdf'), findsOneWidget);
+      expect(find.text('PDF · 2 كيلوبايت'), findsOneWidget);
+      expect(find.text('تم رفع الملف'), findsOneWidget);
+      expect(gateway.uploadCalls, 1);
+      await _settleSnackBars(tester);
+    });
+
+    testWidgets('تعرض رسالة الخادم عند فشل الرفع', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: gatewayWith(
+            uploadError: const ApiException('نوع الملف غير مدعوم.'),
+          ),
+          picker: FakeAttachmentPicker(filename: 'page.jpg'),
+        ),
+      );
+      await openArabicEntry(tester);
+      await tester.tap(find.text('إضافة ملف'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('نوع الملف غير مدعوم.'), findsOneWidget);
+      expect(find.text('لا توجد ملفات مرفوعة'), findsOneWidget);
+    });
+
+    testWidgets('ترفض نوعًا غير مدعوم قبل مغادرة الجهاز', (tester) async {
+      final gateway = gatewayWith();
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: gateway,
+          picker: FakeAttachmentPicker(filename: 'ملاحظات.txt'),
+        ),
+      );
+      await openArabicEntry(tester);
+      await tester.tap(find.text('إضافة ملف'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('نوع الملف غير مدعوم'), findsOneWidget);
+      expect(gateway.uploadCalls, 0);
+    });
+
+    testWidgets('ترفض ملفًا أكبر من الحد قبل مغادرة الجهاز', (tester) async {
+      final gateway = gatewayWith();
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: gateway,
+          picker: FakeAttachmentPicker(
+            filename: 'كبير.jpg',
+            byteCount: maxAttachmentBytes + 1,
+          ),
+        ),
+      );
+      await openArabicEntry(tester);
+      await tester.tap(find.text('إضافة ملف'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('حجم الملف كبير جدًا'), findsOneWidget);
+      expect(gateway.uploadCalls, 0);
+    });
+
+    testWidgets('لا ترفع شيئًا عند إغلاق نافذة الاختيار', (tester) async {
+      final gateway = gatewayWith();
+      await tester.pumpWidget(
+        BayyinApp(gateway: gateway, picker: FakeAttachmentPicker()),
+      );
+      await openArabicEntry(tester);
+      await tester.tap(find.text('إضافة ملف'));
+      await tester.pumpAndSettle();
+
+      expect(gateway.uploadCalls, 0);
+      expect(find.text('لا توجد ملفات مرفوعة'), findsOneWidget);
+    });
+
+    testWidgets('تحتفظ بالملف عند إلغاء تأكيد الحذف', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: gatewayWith(attachments: [_existingAttachment]),
+          picker: FakeAttachmentPicker(),
+        ),
+      );
+      await openArabicEntry(tester);
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pumpAndSettle();
+
+      expect(find.text('هل تريد حذف هذا الملف؟'), findsOneWidget);
+
+      await tester.tap(find.text('إلغاء'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('ورقة-الطالب.jpg'), findsOneWidget);
+    });
+
+    testWidgets('تحذف الملف بعد التأكيد', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: gatewayWith(attachments: [_existingAttachment]),
+          picker: FakeAttachmentPicker(),
+        ),
+      );
+      await openArabicEntry(tester);
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(FilledButton, 'حذف الملف'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('ورقة-الطالب.jpg'), findsNothing);
+      expect(find.text('لا توجد ملفات مرفوعة'), findsOneWidget);
+      expect(find.text('تم حذف الملف'), findsOneWidget);
+      await _settleSnackBars(tester);
+    });
+
+    testWidgets('uploads and deletes a file in English', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: gatewayWith(),
+          picker: FakeAttachmentPicker(filename: 'page-1.png'),
+          initialLocale: AppLocale.english,
+        ),
+      );
+      await _reachEntry(
+        tester,
+        signIn: 'Sign in',
+        assessments: 'Assessments',
+        submissions: 'Student submissions',
+      );
+
+      expect(find.text('Student paper'), findsOneWidget);
+      expect(find.text('No files attached'), findsOneWidget);
+
+      await tester.tap(find.text('Add file'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('page-1.png'), findsOneWidget);
+      expect(find.text('PNG · 2 KB'), findsOneWidget);
+      expect(find.text('File uploaded'), findsOneWidget);
+      await _settleSnackBars(tester);
+
+      await tester.tap(find.byIcon(Icons.delete_outline));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Delete this file?'), findsOneWidget);
+
+      await tester.tap(find.widgetWithText(FilledButton, 'Delete file'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('File deleted'), findsOneWidget);
+      expect(find.text('No files attached'), findsOneWidget);
+      await _settleSnackBars(tester);
+    });
+
+    testWidgets('reports an unsupported type in English', (tester) async {
+      await tester.pumpWidget(
+        BayyinApp(
+          gateway: gatewayWith(),
+          picker: FakeAttachmentPicker(filename: 'notes.txt'),
+          initialLocale: AppLocale.english,
+        ),
+      );
+      await _reachEntry(
+        tester,
+        signIn: 'Sign in',
+        assessments: 'Assessments',
+        submissions: 'Student submissions',
+      );
+      await tester.tap(find.text('Add file'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Unsupported file type'), findsOneWidget);
     });
   });
 
@@ -1061,6 +1320,13 @@ const _existingSubmission = SubmissionRecord(
   ],
 );
 
+const _existingAttachment = AttachmentRecord(
+  id: 'attachment-1',
+  filename: 'ورقة-الطالب.jpg',
+  contentType: 'image/jpeg',
+  fileSize: 2048,
+);
+
 const _emptyAssessment = AssessmentRecord(
   id: 'assessment-1',
   title: 'اختبار الكسور الأول',
@@ -1120,6 +1386,33 @@ Future<void> _reachSubmissions(
   await tester.pumpAndSettle();
 }
 
+/// Carries on from the roster into one student's answer sheet.
+Future<void> _reachEntry(
+  WidgetTester tester, {
+  required String signIn,
+  required String assessments,
+  required String submissions,
+  String student = 'طالب أ',
+}) async {
+  await _reachSubmissions(
+    tester,
+    signIn: signIn,
+    assessments: assessments,
+    submissions: submissions,
+  );
+  await tester.tap(find.text(student));
+  await tester.pumpAndSettle();
+}
+
+/// The student-paper section plus a full answer sheet is taller than the
+/// default 800x600 viewport, and a lazy [ListView] never builds what falls
+/// outside it. Tests that assert on the whole sheet at once need the room.
+void _useTallViewport(WidgetTester tester) {
+  tester.view.physicalSize = const Size(800, 1600);
+  tester.view.devicePixelRatio = 1;
+  addTearDown(tester.view.reset);
+}
+
 /// Taps a control that may sit below the fold of the 800x600 test viewport.
 Future<void> _scrollAndTap(WidgetTester tester, String label) async {
   final target = find.text(label);
@@ -1157,8 +1450,12 @@ class FakeGateway implements BayyinGateway {
     this.assessmentsError,
     this.assessmentsFuture,
     List<SubmissionRecord> submissions = const [],
+    List<AttachmentRecord> attachments = const [],
+    this.uploadError,
+    this.uploadGate,
   }) : _assessments = [...assessments],
-       _submissions = [...submissions];
+       _submissions = [...submissions],
+       _attachments = [...attachments];
 
   final String role;
   final bool failLogin;
@@ -1179,9 +1476,18 @@ class FakeGateway implements BayyinGateway {
   final Future<List<AssessmentRecord>>? assessmentsFuture;
 
   final List<SubmissionRecord> _submissions;
+  final List<AttachmentRecord> _attachments;
+  final Object? uploadError;
+
+  /// Held by a test that wants to catch the uploading state before the request
+  /// resolves.
+  final Completer<void>? uploadGate;
 
   /// Lets a test prove an existing submission was reused instead of recreated.
   int createSubmissionCalls = 0;
+
+  /// Lets a test prove a file rejected on the device never left it.
+  int uploadCalls = 0;
 
   @override
   Future<UserSession> login(String username, String password) async {
@@ -1411,7 +1717,64 @@ class FakeGateway implements BayyinGateway {
   }
 
   @override
+  Future<List<AttachmentRecord>> fetchAttachments({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+  }) async => [..._attachments];
+
+  @override
+  Future<AttachmentRecord> uploadAttachment({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+    required String filename,
+    required Uint8List bytes,
+  }) async {
+    uploadCalls++;
+    if (uploadGate != null) await uploadGate!.future;
+    if (uploadError != null) throw uploadError!;
+    final created = AttachmentRecord(
+      id: 'attachment-${_attachments.length + 1}',
+      filename: filename,
+      // The real server derives this from the bytes; here the name is enough.
+      contentType: switch (filename.split('.').last.toLowerCase()) {
+        'pdf' => 'application/pdf',
+        'png' => 'image/png',
+        _ => 'image/jpeg',
+      },
+      fileSize: bytes.length,
+    );
+    _attachments.add(created);
+    return created;
+  }
+
+  @override
+  Future<void> deleteAttachment({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+    required String attachmentId,
+  }) async => _attachments.removeWhere((item) => item.id == attachmentId);
+
+  @override
   Future<void> logout(String token) async {}
+}
+
+/// Stands in for the platform file dialog, which widget tests cannot open.
+class FakeAttachmentPicker implements AttachmentPicker {
+  FakeAttachmentPicker({this.filename, this.byteCount = 2048});
+
+  /// A null name stands for the teacher dismissing the dialog.
+  final String? filename;
+  final int byteCount;
+
+  @override
+  Future<PickedAttachment?> pick() async {
+    final name = filename;
+    if (name == null) return null;
+    return PickedAttachment(filename: name, bytes: Uint8List(byteCount));
+  }
 }
 
 AssessmentRecord _withQuestions(

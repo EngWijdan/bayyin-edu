@@ -1,6 +1,12 @@
 from django.contrib import admin
 
-from .models import Assessment, Question, Submission, SubmissionAnswer
+from .models import (
+    Assessment,
+    Question,
+    Submission,
+    SubmissionAnswer,
+    SubmissionAttachment,
+)
 
 
 class QuestionInline(admin.TabularInline):
@@ -33,6 +39,13 @@ class SubmissionAnswerInline(admin.TabularInline):
     fields = ("question", "answer_text")
 
 
+class SubmissionAttachmentInline(admin.TabularInline):
+    model = SubmissionAttachment
+    extra = 0
+    fields = ("original_filename", "content_type", "file_size", "created_at")
+    readonly_fields = fields
+
+
 @admin.register(Submission)
 class SubmissionAdmin(admin.ModelAdmin):
     list_display = ("student", "assessment", "created_by", "created_at")
@@ -43,7 +56,7 @@ class SubmissionAdmin(admin.ModelAdmin):
         "assessment__title",
     )
     readonly_fields = ("created_at", "updated_at")
-    inlines = (SubmissionAnswerInline,)
+    inlines = (SubmissionAnswerInline, SubmissionAttachmentInline)
 
 
 @admin.register(SubmissionAnswer)
@@ -51,3 +64,11 @@ class SubmissionAnswerAdmin(admin.ModelAdmin):
     list_display = ("submission", "question", "answer_text")
     search_fields = ("answer_text", "submission__student__internal_code")
     readonly_fields = ("created_at", "updated_at")
+
+
+@admin.register(SubmissionAttachment)
+class SubmissionAttachmentAdmin(admin.ModelAdmin):
+    list_display = ("original_filename", "content_type", "file_size", "submission")
+    list_filter = ("content_type",)
+    search_fields = ("original_filename", "submission__student__internal_code")
+    readonly_fields = ("created_at",)

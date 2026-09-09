@@ -37,6 +37,7 @@ dependencies:
   http: ^1.6.0
   flutter_localizations:
     sdk: flutter
+  file_picker: ^12.2.0
 
 dev_dependencies:
   flutter_test:

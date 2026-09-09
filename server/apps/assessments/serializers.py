@@ -1,11 +1,20 @@
 from decimal import Decimal
+from pathlib import Path
 
+from django.conf import settings
 from django.db import transaction
+from django.urls import reverse
 from rest_framework import serializers
 
 from apps.classrooms.models import Classroom, Student
 
-from .models import Assessment, Question, Submission, SubmissionAnswer
+from .models import (
+    Assessment,
+    Question,
+    Submission,
+    SubmissionAnswer,
+    SubmissionAttachment,
+)
 
 
 class QuestionSerializer(serializers.ModelSerializer):
@@ -197,3 +206,85 @@ class AnswerBulkWriteSerializer(serializers.Serializer):
                 defaults={"answer_text": entry["answer_text"]},
             )
         return submission
+
+
+SUPPORTED_ATTACHMENT_TYPES = {
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".png": "image/png",
+    ".pdf": "application/pdf",
+}
+
+# Leading bytes every file of that type starts with.
+_FILE_SIGNATURES = (
+    (b"\xff\xd8\xff", "image/jpeg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png"),
+    (b"%PDF-", "application/pdf"),
+)
+
+
+def sniff_content_type(uploaded_file):
+    """The type the file's own leading bytes claim, or None if unrecognised."""
+    head = uploaded_file.read(8)
+    uploaded_file.seek(0)
+    for signature, content_type in _FILE_SIGNATURES:
+        if head.startswith(signature):
+            return content_type
+    return None
+
+
+class SubmissionAttachmentSerializer(serializers.ModelSerializer):
+    file = serializers.FileField(write_only=True)
+    download_url = serializers.SerializerMethodField()
+
+    class Meta:
+        model = SubmissionAttachment
+        fields = (
+            "id",
+            "file",
+            "original_filename",
+            "content_type",
+            "file_size",
+            "download_url",
+            "created_at",
+        )
+        read_only_fields = (
+            "id",
+            "original_filename",
+            "content_type",
+            "file_size",
+            "created_at",
+        )
+
+    def get_download_url(self, attachment):
+        return reverse(
+            "assessment-submission-attachment-download",
+            kwargs={
+                "assessment_id": attachment.submission.assessment_id,
+                "submission_id": attachment.submission_id,
+                "attachment_id": attachment.id,
+            },
+        )
+
+    def validate_file(self, uploaded_file):
+        if uploaded_file.size > settings.SUBMISSION_ATTACHMENT_MAX_BYTES:
+            raise serializers.ValidationError("حجم الملف كبير جدًا.")
+        # The browser-declared content type is client controlled, so the file's
+        # own signature decides, and the extension has to agree with it.
+        expected = SUPPORTED_ATTACHMENT_TYPES.get(
+            Path(uploaded_file.name or "").suffix.lower()
+        )
+        if expected is None or sniff_content_type(uploaded_file) != expected:
+            raise serializers.ValidationError("نوع الملف غير مدعوم.")
+        return uploaded_file
+
+    def create(self, validated_data):
+        uploaded_file = validated_data["file"]
+        return SubmissionAttachment.objects.create(
+            submission=self.context["submission"],
+            created_by=self.context["profile"],
+            file=uploaded_file,
+            original_filename=Path(uploaded_file.name).name[:255],
+            content_type=sniff_content_type(uploaded_file),
+            file_size=uploaded_file.size,
+        )

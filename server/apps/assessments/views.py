@@ -1,5 +1,7 @@
+from django.http import FileResponse
 from django.shortcuts import get_object_or_404
 from rest_framework import status
+from rest_framework.parsers import FormParser, MultiPartParser
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
@@ -11,6 +13,7 @@ from .serializers import (
     AssessmentDetailSerializer,
     AssessmentSerializer,
     QuestionSerializer,
+    SubmissionAttachmentSerializer,
     SubmissionDetailSerializer,
     SubmissionSerializer,
 )
@@ -178,4 +181,61 @@ class SubmissionAnswersView(ScopedSubmissionView):
             SubmissionDetailSerializer(
                 submission, context={"assessment": assessment}
             ).data
+        )
+
+
+class SubmissionAttachmentListCreateView(ScopedSubmissionView):
+    parser_classes = (MultiPartParser, FormParser)
+
+    def get(self, request, assessment_id, submission_id):
+        _, submission = self.get_submission(request, assessment_id, submission_id)
+        attachments = submission.attachments.select_related("submission")
+        return Response(SubmissionAttachmentSerializer(attachments, many=True).data)
+
+    def post(self, request, assessment_id, submission_id):
+        _, submission = self.get_submission(request, assessment_id, submission_id)
+        # The submission comes from the URL and the uploader from the token, so
+        # neither relationship can be forged through the request body.
+        serializer = SubmissionAttachmentSerializer(
+            data=request.data,
+            context={"submission": submission, "profile": active_profile(request)},
+        )
+        serializer.is_valid(raise_exception=True)
+        attachment = serializer.save()
+        return Response(
+            SubmissionAttachmentSerializer(attachment).data,
+            status=status.HTTP_201_CREATED,
+        )
+
+
+class ScopedAttachmentView(ScopedSubmissionView):
+    def get_attachment(self, request, assessment_id, submission_id, attachment_id):
+        _, submission = self.get_submission(request, assessment_id, submission_id)
+        # Looking the attachment up through the submission means an id that
+        # belongs to a different submission is a 404.
+        return get_object_or_404(submission.attachments, id=attachment_id)
+
+
+class SubmissionAttachmentDetailView(ScopedAttachmentView):
+    def delete(self, request, assessment_id, submission_id, attachment_id):
+        attachment = self.get_attachment(
+            request, assessment_id, submission_id, attachment_id
+        )
+        attachment.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class SubmissionAttachmentDownloadView(ScopedAttachmentView):
+    """Streams the stored file behind the same scope check as everything else,
+    which is why MEDIA_ROOT is not exposed as static files."""
+
+    def get(self, request, assessment_id, submission_id, attachment_id):
+        attachment = self.get_attachment(
+            request, assessment_id, submission_id, attachment_id
+        )
+        return FileResponse(
+            attachment.file.open("rb"),
+            content_type=attachment.content_type,
+            as_attachment=True,
+            filename=attachment.original_filename,
         )

@@ -1,9 +1,11 @@
 import uuid
 from decimal import Decimal
+from pathlib import Path
 
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator
 from django.db import models
+from django.dispatch import receiver
 
 from apps.accounts.models import UserProfile
 from apps.classrooms.models import Classroom, Student
@@ -198,3 +200,51 @@ class SubmissionAnswer(models.Model):
             and self.question.assessment_id != self.submission.assessment_id
         ):
             raise ValidationError({"question": "السؤال لا ينتمي إلى هذا الاختبار."})
+
+
+def attachment_upload_path(instance, filename):
+    """Store under a per-submission folder using a generated name, so an
+    unsafe or colliding client filename never reaches the filesystem."""
+    suffix = Path(filename).suffix.lower()
+    return f"submission_attachments/{instance.submission_id}/{uuid.uuid4().hex}{suffix}"
+
+
+class SubmissionAttachment(models.Model):
+    """A photo or PDF of the student's paper. One submission may have several,
+    because a paper can run to more than one page."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    submission = models.ForeignKey(
+        Submission,
+        on_delete=models.CASCADE,
+        related_name="attachments",
+        verbose_name="التسليم",
+    )
+    file = models.FileField("الملف", upload_to=attachment_upload_path)
+    original_filename = models.CharField("اسم الملف الأصلي", max_length=255)
+    content_type = models.CharField("نوع الملف", max_length=100)
+    file_size = models.PositiveIntegerField("حجم الملف")
+    created_by = models.ForeignKey(
+        UserProfile,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="uploaded_attachments",
+        verbose_name="رفع بواسطة",
+    )
+    created_at = models.DateTimeField("تاريخ الرفع", auto_now_add=True)
+
+    class Meta:
+        verbose_name = "مرفق"
+        verbose_name_plural = "المرفقات"
+        ordering = ("created_at",)
+
+    def __str__(self) -> str:
+        return self.original_filename
+
+
+@receiver(models.signals.post_delete, sender=SubmissionAttachment)
+def discard_attachment_file(sender, instance, **kwargs):
+    """Django drops the row but keeps the file, so remove it here. A signal
+    rather than an overridden delete() so cascades are covered too."""
+    instance.file.delete(save=False)

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../l10n/app_language.dart';
+import '../services/attachment_picker.dart';
 import '../services/bayyin_api.dart';
 import '../widgets/async_states.dart';
 import '../widgets/language_switcher.dart';
@@ -13,12 +14,14 @@ class TeacherDashboard extends StatefulWidget {
   const TeacherDashboard({
     super.key,
     required this.gateway,
+    required this.picker,
     required this.session,
     this.onLogout,
     required this.onLocaleChanged,
   });
 
   final BayyinGateway gateway;
+  final AttachmentPicker picker;
   final UserSession session;
   final VoidCallback? onLogout;
   final ValueChanged<AppLocale> onLocaleChanged;
@@ -152,6 +155,7 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
       MaterialPageRoute<void>(
         builder: (_) => TeacherAssessmentsPage(
           gateway: widget.gateway,
+          picker: widget.picker,
           token: widget.session.token,
           classrooms: classrooms,
         ),

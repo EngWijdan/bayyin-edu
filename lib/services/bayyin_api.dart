@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:http/http.dart' as http;
 
@@ -261,6 +262,30 @@ class SubmissionRecord {
   bool get hasName => studentName.trim().isNotEmpty;
 }
 
+/// A page of the student's paper stored on the server. The bytes stay on the
+/// server; the app only ever handles this metadata.
+class AttachmentRecord {
+  const AttachmentRecord({
+    required this.id,
+    required this.filename,
+    required this.contentType,
+    required this.fileSize,
+  });
+
+  factory AttachmentRecord.fromJson(Map<String, dynamic> json) =>
+      AttachmentRecord(
+        id: json['id'].toString(),
+        filename: json['original_filename'] as String? ?? '',
+        contentType: json['content_type'] as String? ?? '',
+        fileSize: json['file_size'] as int? ?? 0,
+      );
+
+  final String id;
+  final String filename;
+  final String contentType;
+  final int fileSize;
+}
+
 class ApiException implements Exception, ApiErrorMessage {
   const ApiException(this.message);
   @override
@@ -337,6 +362,24 @@ abstract class BayyinGateway {
     required String assessmentId,
     required String submissionId,
     required Map<String, String> answersByQuestionId,
+  });
+  Future<List<AttachmentRecord>> fetchAttachments({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+  });
+  Future<AttachmentRecord> uploadAttachment({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+    required String filename,
+    required Uint8List bytes,
+  });
+  Future<void> deleteAttachment({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+    required String attachmentId,
   });
   Future<void> logout(String token);
 }
@@ -617,6 +660,68 @@ class BayyinApi implements BayyinGateway {
     if (response.statusCode != 200) throw ApiException(_errorMessage(data));
     return SubmissionRecord.fromJson(data);
   }
+
+  @override
+  Future<List<AttachmentRecord>> fetchAttachments({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+  }) async {
+    final response = await _client.get(
+      _attachmentsUri(assessmentId, submissionId),
+      headers: _authorizedHeaders(token),
+    );
+    final data = _decodeAny(response);
+    if (response.statusCode != 200) throw ApiException(_errorMessage(data));
+    return (data as List<dynamic>)
+        .map((item) => AttachmentRecord.fromJson(item as Map<String, dynamic>))
+        .toList();
+  }
+
+  @override
+  Future<AttachmentRecord> uploadAttachment({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+    required String filename,
+    required Uint8List bytes,
+  }) async {
+    // The submission comes from the URL and the uploader from the token, so
+    // the file is the only thing the body carries.
+    final request =
+        http.MultipartRequest('POST', _attachmentsUri(assessmentId, submissionId))
+          ..headers['Authorization'] = 'Token $token'
+          ..files.add(
+            http.MultipartFile.fromBytes('file', bytes, filename: filename),
+          );
+    final response = await http.Response.fromStream(await _client.send(request));
+    final data = _decode(response);
+    if (response.statusCode != 201) throw ApiException(_errorMessage(data));
+    return AttachmentRecord.fromJson(data);
+  }
+
+  @override
+  Future<void> deleteAttachment({
+    required String token,
+    required String assessmentId,
+    required String submissionId,
+    required String attachmentId,
+  }) async {
+    final response = await _client.delete(
+      Uri.parse(
+        '${_attachmentsUri(assessmentId, submissionId)}$attachmentId/',
+      ),
+      headers: _authorizedHeaders(token),
+    );
+    if (response.statusCode != 204) {
+      throw ApiException(_errorMessage(_decodeAny(response)));
+    }
+  }
+
+  Uri _attachmentsUri(String assessmentId, String submissionId) => Uri.parse(
+    '$baseUrl/api/v1/assessments/$assessmentId'
+    '/submissions/$submissionId/attachments/',
+  );
 
   @override
   Future<void> logout(String token) async {

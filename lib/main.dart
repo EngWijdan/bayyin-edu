@@ -4,15 +4,17 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'l10n/app_language.dart';
 import 'screens/manager_dashboard.dart';
 import 'screens/teacher_dashboard.dart';
+import 'services/attachment_picker.dart';
 import 'services/bayyin_api.dart';
 import 'widgets/language_switcher.dart';
 
 void main() => runApp(const BayyinApp());
 
 class BayyinApp extends StatefulWidget {
-  const BayyinApp({super.key, this.gateway, this.initialLocale});
+  const BayyinApp({super.key, this.gateway, this.picker, this.initialLocale});
 
   final BayyinGateway? gateway;
+  final AttachmentPicker? picker;
   final AppLocale? initialLocale;
 
   @override
@@ -55,6 +57,7 @@ class _BayyinAppState extends State<BayyinApp> {
       ),
       home: AuthGate(
         gateway: widget.gateway ?? BayyinApi(),
+        picker: widget.picker ?? const PlatformAttachmentPicker(),
         onLocaleChanged: changeLanguage,
       ),
     );
@@ -65,10 +68,12 @@ class AuthGate extends StatefulWidget {
   const AuthGate({
     super.key,
     required this.gateway,
+    required this.picker,
     required this.onLocaleChanged,
   });
 
   final BayyinGateway gateway;
+  final AttachmentPicker picker;
   final ValueChanged<AppLocale> onLocaleChanged;
 
   @override
@@ -98,6 +103,7 @@ class _AuthGateState extends State<AuthGate> {
     }
     return TeacherDashboard(
       gateway: widget.gateway,
+      picker: widget.picker,
       session: currentSession,
       onLogout: _logout,
       onLocaleChanged: widget.onLocaleChanged,

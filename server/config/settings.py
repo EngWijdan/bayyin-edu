@@ -62,6 +62,14 @@ TIME_ZONE = "Asia/Riyadh"
 USE_I18N = True
 USE_TZ = True
 STATIC_URL = "static/"
+
+# Uploaded student papers live on the local disk. MEDIA_ROOT is deliberately
+# never served as static files: attachments are streamed through an
+# authenticated view so an unguessed URL is not the only thing protecting them.
+MEDIA_URL = "media/"
+MEDIA_ROOT = BASE_DIR / "media"
+SUBMISSION_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 REST_FRAMEWORK = {

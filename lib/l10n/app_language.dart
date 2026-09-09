@@ -249,6 +249,46 @@ class AppStrings {
     'No questions in this assessment',
   );
 
+  // ------------------------------------------------------------ attachments
+  String get studentPaper => _('ورقة الطالب', 'Student paper');
+  String get addFile => _('إضافة ملف', 'Add file');
+  String get uploadFile => _('رفع ملف', 'Upload file');
+  String get uploading => _('جاري الرفع…', 'Uploading…');
+  String get deleteFile => _('حذف الملف', 'Delete file');
+  String get noFilesAttached =>
+      _('لا توجد ملفات مرفوعة', 'No files attached');
+  String get unsupportedFileType =>
+      _('نوع الملف غير مدعوم', 'Unsupported file type');
+  String get fileTooLarge => _('حجم الملف كبير جدًا', 'File is too large');
+  String get fileUploaded => _('تم رفع الملف', 'File uploaded');
+  String get fileDeleted => _('تم حذف الملف', 'File deleted');
+  String get deleteFileQuestion =>
+      _('هل تريد حذف هذا الملف؟', 'Delete this file?');
+  String get supportedFileTypes =>
+      _('JPG أو PNG أو PDF، بحد أقصى 10 ميجابايت',
+        'JPG, PNG or PDF, up to 10 MB');
+
+  /// Format names read the same in both languages; only the fallback for an
+  /// unexpected type needs translating.
+  String fileTypeLabel(String contentType) => switch (contentType) {
+    'image/jpeg' => 'JPEG',
+    'image/png' => 'PNG',
+    'application/pdf' => 'PDF',
+    _ => _('ملف', 'File'),
+  };
+
+  String fileSizeLabel(int bytes) {
+    const kilobyte = 1024;
+    if (bytes < kilobyte * kilobyte) {
+      return _(
+        '${(bytes / kilobyte).ceil()} كيلوبايت',
+        '${(bytes / kilobyte).ceil()} KB',
+      );
+    }
+    final megabytes = (bytes / (kilobyte * kilobyte)).toStringAsFixed(1);
+    return _('$megabytes ميجابايت', '$megabytes MB');
+  }
+
   /// Scores come back as decimals so half marks survive, but whole numbers
   /// should still read as `2` rather than `2.00`.
   static String _score(double value) {
@@ -304,6 +344,8 @@ class AppStrings {
         'Two answers cannot be sent for the same question.',
     'الطالب لا ينتمي إلى صف هذا الاختبار.':
         'That student does not belong to this assessment\'s classroom.',
+    'نوع الملف غير مدعوم.': 'Unsupported file type.',
+    'حجم الملف كبير جدًا.': 'File is too large.',
     'غير موجود.': 'Not found.',
     'تعذر قراءة استجابة الخادم.': 'The server response could not be read.',
     'تعذر إكمال الطلب. حاول مرة أخرى.':

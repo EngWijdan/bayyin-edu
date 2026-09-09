@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 
 import '../l10n/app_language.dart';
+import '../services/attachment_picker.dart';
 import '../services/bayyin_api.dart';
 import '../widgets/async_states.dart';
 import 'assessment_submissions.dart';
@@ -11,11 +12,13 @@ class AssessmentDetailsPage extends StatefulWidget {
   const AssessmentDetailsPage({
     super.key,
     required this.gateway,
+    required this.picker,
     required this.token,
     required this.assessment,
   });
 
   final BayyinGateway gateway;
+  final AttachmentPicker picker;
   final String token;
   final AssessmentRecord assessment;
 
@@ -139,6 +142,7 @@ class _AssessmentDetailsPageState extends State<AssessmentDetailsPage> {
       MaterialPageRoute<void>(
         builder: (_) => AssessmentSubmissionsPage(
           gateway: widget.gateway,
+          picker: widget.picker,
           token: widget.token,
           assessment: widget.assessment,
         ),
