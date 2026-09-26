@@ -1,6 +1,7 @@
-import 'dart:typed_data';
+import 'dart:developer' as developer;
 
 import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart';
 
 /// Extensions and byte ceiling the server accepts. Checking them before the
 /// upload is a courtesy to the teacher; the server decides for real.
@@ -33,16 +34,39 @@ abstract class AttachmentPicker {
 class PlatformAttachmentPicker implements AttachmentPicker {
   const PlatformAttachmentPicker();
 
+  /// Single-file document picker. On iOS this is `UIDocumentPickerViewController`
+  /// (Files), not the photo library, so PDF/JPG/PNG must live in Files.
+  ///
+  /// `FilePicker.pickFiles()` defaults to multiple selection in v12; `pickFile()`
+  /// is the single-file API. `withData` / `withReadStream` are deprecated —
+  /// bytes are read with [PlatformFile.readAsBytes] after the pick.
   @override
   Future<PickedAttachment?> pick() async {
+    _log('opening document picker for $attachmentExtensions');
     final file = await FilePicker.pickFile(
       type: FileType.custom,
       allowedExtensions: attachmentExtensions,
+      compressionQuality: 0,
     );
-    if (file == null) return null;
-    return PickedAttachment(
-      filename: file.name,
-      bytes: await file.readAsBytes(),
+    if (file == null) {
+      _log('picker cancelled');
+      return null;
+    }
+    _log(
+      'picked name=${file.name} path=${file.path} declaredSize=${file.lengthSync()}',
     );
+    final bytes = await file.readAsBytes();
+    _log('read ${bytes.length} bytes');
+    if (bytes.isEmpty) {
+      _log('picked file had no bytes');
+      return null;
+    }
+    return PickedAttachment(filename: file.name, bytes: bytes);
+  }
+
+  static void _log(String message) {
+    if (kDebugMode) {
+      developer.log(message, name: 'AttachmentPicker');
+    }
   }
 }

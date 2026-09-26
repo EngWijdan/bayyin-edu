@@ -1,26 +1,58 @@
 from django.urls import path
 
 from .views import (
+    AssessmentClassInsightsView,
     AssessmentDetailView,
+    AssessmentExtractQuestionsView,
     AssessmentListCreateView,
+    AssessmentQuestionCandidateConfirmView,
+    AssessmentQuestionCandidateDetailView,
+    AssessmentQuestionCandidateListView,
     AssessmentQuestionDetailView,
     AssessmentQuestionListCreateView,
+    AssessmentSourceAttachmentDownloadView,
+    AssessmentSourceAttachmentListCreateView,
+    ManagerInsightsView,
+    RemediationPlanGenerateView,
+    RemediationPlanListView,
     SubmissionAnswersView,
     SubmissionAttachmentDetailView,
     SubmissionAttachmentDownloadView,
     SubmissionAttachmentListCreateView,
+    SubmissionAttachmentOcrView,
     SubmissionDetailView,
     SubmissionListCreateView,
+    SubmissionAnswerEvaluateView,
+    SubmissionEvaluateView,
+    SubmissionOcrMappingConfirmView,
+    SubmissionOcrMappingView,
+    SubmissionResultView,
 )
 
 _SUBMISSION = "assessments/<uuid:assessment_id>/submissions/<uuid:submission_id>"
 
 urlpatterns = [
+    path("manager/insights/", ManagerInsightsView.as_view(), name="manager-insights"),
     path("assessments/", AssessmentListCreateView.as_view(), name="assessment-list-create"),
     path(
         "assessments/<uuid:assessment_id>/",
         AssessmentDetailView.as_view(),
         name="assessment-detail",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/class-insights/",
+        AssessmentClassInsightsView.as_view(),
+        name="assessment-class-insights",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/remediation-plans/",
+        RemediationPlanListView.as_view(),
+        name="assessment-remediation-plan-list",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/remediation-plans/<str:group>/generate/",
+        RemediationPlanGenerateView.as_view(),
+        name="assessment-remediation-plan-generate",
     ),
     path(
         "assessments/<uuid:assessment_id>/questions/",
@@ -31,6 +63,36 @@ urlpatterns = [
         "assessments/<uuid:assessment_id>/questions/<uuid:question_id>/",
         AssessmentQuestionDetailView.as_view(),
         name="assessment-question-detail",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/source-attachments/",
+        AssessmentSourceAttachmentListCreateView.as_view(),
+        name="assessment-source-attachment-list-create",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/source-attachments/<uuid:attachment_id>/download/",
+        AssessmentSourceAttachmentDownloadView.as_view(),
+        name="assessment-source-attachment-download",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/extract-questions/",
+        AssessmentExtractQuestionsView.as_view(),
+        name="assessment-extract-questions",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/question-candidates/",
+        AssessmentQuestionCandidateListView.as_view(),
+        name="assessment-question-candidate-list",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/question-candidates/confirm/",
+        AssessmentQuestionCandidateConfirmView.as_view(),
+        name="assessment-question-candidate-confirm",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/question-candidates/<uuid:candidate_id>/",
+        AssessmentQuestionCandidateDetailView.as_view(),
+        name="assessment-question-candidate-detail",
     ),
     path(
         "assessments/<uuid:assessment_id>/submissions/",
@@ -61,5 +123,35 @@ urlpatterns = [
         f"{_SUBMISSION}/attachments/<uuid:attachment_id>/download/",
         SubmissionAttachmentDownloadView.as_view(),
         name="assessment-submission-attachment-download",
+    ),
+    path(
+        f"{_SUBMISSION}/attachments/<uuid:attachment_id>/ocr/",
+        SubmissionAttachmentOcrView.as_view(),
+        name="assessment-submission-attachment-ocr",
+    ),
+    path(
+        f"{_SUBMISSION}/ocr-mapping/",
+        SubmissionOcrMappingView.as_view(),
+        name="assessment-submission-ocr-mapping",
+    ),
+    path(
+        f"{_SUBMISSION}/ocr-mapping/confirm/",
+        SubmissionOcrMappingConfirmView.as_view(),
+        name="assessment-submission-ocr-mapping-confirm",
+    ),
+    path(
+        f"{_SUBMISSION}/evaluate/",
+        SubmissionEvaluateView.as_view(),
+        name="assessment-submission-evaluate",
+    ),
+    path(
+        f"{_SUBMISSION}/result/",
+        SubmissionResultView.as_view(),
+        name="assessment-submission-result",
+    ),
+    path(
+        f"{_SUBMISSION}/answers/<uuid:answer_id>/evaluate/",
+        SubmissionAnswerEvaluateView.as_view(),
+        name="assessment-submission-answer-evaluate",
     ),
 ]

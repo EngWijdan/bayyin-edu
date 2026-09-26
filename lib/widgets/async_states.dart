@@ -33,7 +33,13 @@ class LoadingState extends StatelessWidget {
       children: [
         const CircularProgressIndicator(),
         const SizedBox(height: 16),
-        Text(message, textAlign: TextAlign.center),
+        Text(
+          message,
+          textAlign: TextAlign.center,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
       ],
     ),
   );
@@ -56,7 +62,7 @@ class ErrorRetryState extends StatelessWidget {
     child: Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Icon(Icons.cloud_off_outlined, size: 48),
+        const Icon(Icons.cloud_off_rounded, size: 48),
         const SizedBox(height: 12),
         Text(message, textAlign: TextAlign.center),
         const SizedBox(height: 12),
@@ -79,7 +85,11 @@ class EmptyState extends StatelessWidget {
       padding: const EdgeInsets.all(28),
       child: Column(
         children: [
-          Icon(icon, size: 48),
+          Icon(
+            icon,
+            size: 40,
+            color: Theme.of(context).colorScheme.primary,
+          ),
           const SizedBox(height: 12),
           Text(message, textAlign: TextAlign.center),
         ],

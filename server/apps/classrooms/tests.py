@@ -153,6 +153,112 @@ class ClassroomApiTests(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
 
+    def test_manager_updates_classroom_details_and_teacher(self):
+        self.authenticate(self.manager)
+        other_teacher = UserProfile.objects.create(
+            user=get_user_model().objects.create_user(
+                username="teacher-two", password="strong-pass-123"
+            ),
+            role=UserProfile.Role.TEACHER,
+        )
+        classroom = Classroom.objects.create(
+            teacher=self.teacher,
+            name="سادس أ",
+            grade="الصف السادس",
+            subject="الرياضيات",
+            academic_year="1448",
+        )
+
+        response = self.client.patch(
+            f"/api/v1/management/classrooms/{classroom.id}/",
+            {
+                "name": "سادس ب",
+                "grade": "الصف السادس",
+                "subject": "العلوم",
+                "academic_year": "1449",
+                "teacher_profile_id": str(other_teacher.id),
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        classroom.refresh_from_db()
+        self.assertEqual(classroom.name, "سادس ب")
+        self.assertEqual(classroom.subject, "العلوم")
+        self.assertEqual(classroom.academic_year, "1449")
+        self.assertEqual(classroom.teacher, other_teacher)
+        self.assertEqual(response.data["teacher_name"], "teacher-two")
+        self.assertEqual(response.data["teacher_profile_id"], other_teacher.id)
+        self.assertEqual(response.data["assessments_count"], 0)
+
+    def test_duplicate_classroom_name_for_same_teacher_is_rejected(self):
+        self.authenticate(self.manager)
+        Classroom.objects.create(
+            teacher=self.teacher,
+            name="سادس أ",
+            grade="الصف السادس",
+            subject="الرياضيات",
+            academic_year="1448",
+        )
+        classroom = Classroom.objects.create(
+            teacher=self.teacher,
+            name="سادس ب",
+            grade="الصف السادس",
+            subject="العلوم",
+            academic_year="1448",
+        )
+
+        response = self.client.patch(
+            f"/api/v1/management/classrooms/{classroom.id}/",
+            {"name": "سادس أ"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        classroom.refresh_from_db()
+        self.assertEqual(classroom.name, "سادس ب")
+
+    def test_manager_deletes_classroom_and_its_students(self):
+        self.authenticate(self.manager)
+        classroom = Classroom.objects.create(
+            teacher=self.teacher,
+            name="سادس أ",
+            grade="الصف السادس",
+            subject="الرياضيات",
+            academic_year="1448",
+        )
+        Student.objects.create(classroom=classroom, internal_code="S-001")
+
+        response = self.client.delete(f"/api/v1/management/classrooms/{classroom.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Classroom.objects.filter(id=classroom.id).exists())
+        self.assertFalse(Student.objects.filter(internal_code="S-001").exists())
+
+    def test_teacher_cannot_update_or_delete_classroom(self):
+        classroom = Classroom.objects.create(
+            teacher=self.teacher,
+            name="سادس أ",
+            grade="الصف السادس",
+            subject="الرياضيات",
+            academic_year="1448",
+        )
+        self.authenticate(self.teacher)
+
+        patch_response = self.client.patch(
+            f"/api/v1/management/classrooms/{classroom.id}/",
+            {"name": "صف معدل"},
+            format="json",
+        )
+        delete_response = self.client.delete(
+            f"/api/v1/management/classrooms/{classroom.id}/"
+        )
+
+        self.assertEqual(patch_response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(delete_response.status_code, status.HTTP_403_FORBIDDEN)
+        classroom.refresh_from_db()
+        self.assertEqual(classroom.name, "سادس أ")
+
 
 class TeacherClassroomAccessTests(APITestCase):
     """A teacher reads their own classrooms and nothing else."""
@@ -258,16 +364,19 @@ class TeacherClassroomAccessTests(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
         self.assertFalse(Classroom.objects.filter(name="صف جديد").exists())
 
-    def test_teacher_cannot_add_a_student_to_their_own_classroom(self):
+    def test_teacher_can_add_a_student_to_their_own_classroom(self):
         self.authenticate(self.teacher_a)
         response = self.client.post(
             self.students_url(self.class_6a),
-            {"internal_code": "S-002"},
+            {"internal_code": "S-002", "display_name": "طالب ب"},
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
-        self.assertFalse(Student.objects.filter(internal_code="S-002").exists())
+        self.assertEqual(response.status_code, status.HTTP_201_CREATED)
+        self.assertEqual(
+            self.class_6a.students.filter(internal_code="S-002").get().display_name,
+            "طالب ب",
+        )
 
     def test_teacher_cannot_add_a_student_to_another_teachers_classroom(self):
         self.authenticate(self.teacher_a)
@@ -277,7 +386,7 @@ class TeacherClassroomAccessTests(APITestCase):
             format="json",
         )
 
-        self.assertEqual(response.status_code, status.HTTP_403_FORBIDDEN)
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
         self.assertFalse(Student.objects.filter(internal_code="S-003").exists())
 
     def test_deactivated_teacher_is_rejected(self):
