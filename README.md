@@ -1,67 +1,94 @@
-# بيّن - Bayyin
+# بيّن — Bayyin MVP v1.0.0
 
-تطبيق Flutter عربي يساعد المعلم على تحليل أعمال الطلاب، مراجعة الأدلة، وتكوين مجموعات وخطط علاجية.
+Bayyin helps a school manager and teachers turn paper assessments into class insights and remediation plans. Teachers review OCR, confirm answers, then the server evaluates with Gemini.
 
-## تشغيل تطبيق Flutter
+## MVP Features
 
-```bash
-flutter run
-```
+- Manager and Teacher roles
+- Classrooms and students
+- Assessments and questions
+- Student submissions
+- Attachments (JPG / PNG / PDF, 10 MB)
+- OCR (Tesseract, Arabic + English)
+- Teacher OCR review and confirm
+- AI evaluation (Gemini)
+- Student results and gaps
+- Class insights and grouping (Foundation / Practice / Ready)
+- AI remediation plans
+- Manager school insights
+- Arabic and English (RTL / LTR)
 
-## تشغيل الخادم محليًا
+## Tech stack
 
-يتطلب Docker Desktop أو بديلًا متوافقًا مع Docker Compose.
+- Flutter
+- Django / Django REST Framework
+- PostgreSQL
+- Docker Compose
+- Tesseract OCR + Poppler
+- Gemini
+- Redis / Celery worker process (reserved; OCR and evaluation are synchronous in this MVP)
+
+## Local setup
+
+Requires Flutter, Docker Desktop (or Compose), and a copy of this repo.
 
 ```bash
 cp .env.example .env
-docker compose up --build
+docker compose up -d --build
 ```
 
-بعد اكتمال التشغيل، افتح:
+Wait until the API is healthy:
 
 ```text
 http://localhost:8000/api/v1/health/
 ```
 
-الاستجابة المتوقعة:
+Expected:
 
 ```json
 {"status":"ok","service":"bayyin-api","database":"connected"}
 ```
 
-## إنشاء مدير المدرسة الأول
-
-هذه خطوة تأسيسية تنفذ مرة واحدة، وبعدها يضيف المدير المعلمين من تطبيق Flutter:
+Create the first school manager (once):
 
 ```bash
 docker compose exec api python manage.py bootstrap_manager --username manager
 ```
 
-واجهات الحسابات الحالية:
-
-- `POST /api/v1/auth/login/`
-- `GET /api/v1/auth/me/`
-- `POST /api/v1/auth/logout/`
-- `GET|POST /api/v1/management/teachers/` للمدير فقط
-
-لإيقاف الخدمات دون حذف البيانات:
+Run the Flutter app:
 
 ```bash
-docker compose down
+flutter run
 ```
 
-A new Flutter project.
+Migrations run automatically when the API container starts (`python manage.py migrate`). Media files persist in the `bayyin_media` Docker volume.
 
-## Getting Started
+## Environment
 
-This project is a starting point for a Flutter application.
+See `.env.example`. Required names:
 
-A few resources to get you started if this is your first Flutter project:
+- `DJANGO_SECRET_KEY`, `DJANGO_DEBUG`, `DJANGO_ALLOWED_HOSTS`
+- `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` (and host/port if not using Compose)
+- `GEMINI_API_KEY` (optional for UI-only work; required for evaluation and remediation)
+- `GEMINI_MODEL`, `GEMINI_TIMEOUT_MS`
+- `REDIS_URL`
 
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
+Do not commit `.env`. Attachment files are not served as public `MEDIA_URL`.
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+## Tests
+
+```bash
+flutter analyze
+flutter test
+flutter build bundle
+
+docker compose exec api python manage.py test
+docker compose exec api python manage.py makemigrations --check
+docker compose exec api python manage.py check
+```
+
+## Architecture
+
+Paper → OCR → Teacher review → Evaluation → Insights → Remediation
+
+The Flutter app never holds the Gemini key. Results, class insights, and manager insights are computed from current evaluation rows; they are not stored snapshots.

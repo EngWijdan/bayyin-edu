@@ -7,6 +7,8 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-bayyin_local_only}
     volumes:
       - bayyin_postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -39,8 +41,13 @@ services:
       POSTGRES_HOST: db
       POSTGRES_PORT: 5432
       REDIS_URL: redis://redis:6379/0
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.6-flash}
+      GEMINI_FALLBACK_MODEL: ${GEMINI_FALLBACK_MODEL:-gemini-3.5-flash}
+      GEMINI_TIMEOUT_MS: ${GEMINI_TIMEOUT_MS:-30000}
     volumes:
       - ./server:/app
+      - bayyin_media:/app/media
     ports:
       - "8000:8000"
     depends_on:
@@ -56,6 +63,7 @@ services:
     environment: *server_environment
     volumes:
       - ./server:/app
+      - bayyin_media:/app/media
     depends_on:
       db:
         condition: service_healthy
@@ -65,3 +73,4 @@ services:
 volumes:
   bayyin_postgres_data:
   bayyin_redis_data:
+  bayyin_media:

@@ -10,6 +10,7 @@ from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.signals import request_finished
 from django.db import IntegrityError, close_old_connections, transaction
 from django.test import TestCase, override_settings
+from django.utils import timezone
 from rest_framework import status
 from rest_framework.authtoken.models import Token
 from rest_framework.test import APITestCase
@@ -102,6 +103,17 @@ class AssessmentModelTests(TestCase):
             [question.text for question in self.assessment.questions.all()],
             ["أول", "ثانٍ", "ثالث"],
         )
+
+    def test_active_queryset_hides_archived_assessments(self):
+        archived = Assessment.objects.create(
+            classroom=self.assessment.classroom,
+            title="اختبار مؤرشف",
+            created_by=self.teacher,
+            archived_at=timezone.now(),
+        )
+
+        self.assertEqual(list(Assessment.objects.active()), [self.assessment])
+        self.assertEqual(list(Assessment.objects.archived()), [archived])
 
 
 class AssessmentApiTests(APITestCase):
@@ -234,6 +246,76 @@ class AssessmentApiTests(APITestCase):
 
         self.assertEqual(response.data[0]["questions_count"], 2)
         self.assertEqual(Decimal(str(response.data[0]["total_score"])), Decimal("4"))
+        self.assertFalse(response.data[0]["archived"])
+        self.assertIsNone(response.data[0]["archived_at"])
+
+    def test_default_list_hides_archived_assessments(self):
+        self.assessment_a.archived_at = timezone.now()
+        self.assessment_a.save(update_fields=["archived_at"])
+        self.authenticate(self.teacher_a)
+
+        active = self.client.get("/api/v1/assessments/")
+        archived = self.client.get("/api/v1/assessments/?status=archived")
+        everything = self.client.get("/api/v1/assessments/?status=all")
+
+        self.assertEqual(active.data, [])
+        self.assertEqual({item["title"] for item in archived.data}, {"اختبار الكسور الأول"})
+        self.assertTrue(archived.data[0]["archived"])
+        self.assertIsNotNone(archived.data[0]["archived_at"])
+        self.assertEqual({item["title"] for item in everything.data}, {"اختبار الكسور الأول"})
+
+    def test_invalid_list_status_is_rejected(self):
+        self.authenticate(self.teacher_a)
+        response = self.client.get("/api/v1/assessments/?status=trash")
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("status", response.data)
+
+    def test_teacher_archives_and_restores_their_own_assessment(self):
+        self.authenticate(self.teacher_a)
+        archived = self.client.patch(
+            f"/api/v1/assessments/{self.assessment_a.id}/",
+            {"archived": True},
+            format="json",
+        )
+
+        self.assertEqual(archived.status_code, status.HTTP_200_OK)
+        self.assertTrue(archived.data["archived"])
+        self.assessment_a.refresh_from_db()
+        self.assertIsNotNone(self.assessment_a.archived_at)
+
+        restored = self.client.patch(
+            f"/api/v1/assessments/{self.assessment_a.id}/",
+            {"archived": False},
+            format="json",
+        )
+
+        self.assertEqual(restored.status_code, status.HTTP_200_OK)
+        self.assertFalse(restored.data["archived"])
+        self.assessment_a.refresh_from_db()
+        self.assertIsNone(self.assessment_a.archived_at)
+
+    def test_teacher_deletes_their_own_assessment(self):
+        self.authenticate(self.teacher_a)
+        response = self.client.delete(f"/api/v1/assessments/{self.assessment_a.id}/")
+
+        self.assertEqual(response.status_code, status.HTTP_204_NO_CONTENT)
+        self.assertFalse(Assessment.objects.filter(id=self.assessment_a.id).exists())
+
+    def test_teacher_cannot_archive_or_delete_another_teachers_assessment(self):
+        self.authenticate(self.teacher_a)
+        archived = self.client.patch(
+            f"/api/v1/assessments/{self.assessment_b.id}/",
+            {"archived": True},
+            format="json",
+        )
+        removed = self.client.delete(f"/api/v1/assessments/{self.assessment_b.id}/")
+
+        self.assertEqual(archived.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(removed.status_code, status.HTTP_404_NOT_FOUND)
+        self.assessment_b.refresh_from_db()
+        self.assertIsNone(self.assessment_b.archived_at)
+        self.assertTrue(Assessment.objects.filter(id=self.assessment_b.id).exists())
 
     # --------------------------------------------------------------- retrieve
 

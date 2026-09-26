@@ -50,7 +50,7 @@ class LanguageSwitcher extends StatelessWidget {
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(Icons.language),
+            const Icon(Icons.language_rounded),
             if (showLabel) ...[
               const SizedBox(width: 8),
               Text(current.label),

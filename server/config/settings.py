@@ -7,12 +7,25 @@ SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "unsafe-local-development-key")
 DEBUG = os.environ.get("DJANGO_DEBUG", "false").lower() == "true"
 ALLOWED_HOSTS = [host.strip() for host in os.environ.get("DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")]
 
+# Flutter web runs on a random localhost port, so a regex allowlist is required.
+# Extra exact origins can be added via CORS_ALLOWED_ORIGINS (comma-separated).
+CORS_ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.environ.get("CORS_ALLOWED_ORIGINS", "").split(",")
+    if origin.strip()
+]
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    r"^http://localhost:\d+$",
+    r"^http://127\.0\.0\.1:\d+$",
+]
+
 INSTALLED_APPS = [
     "django.contrib.auth",
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    "corsheaders",
     "rest_framework",
     "rest_framework.authtoken",
     "apps.core",
@@ -23,6 +36,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
@@ -62,6 +76,7 @@ TIME_ZONE = "Asia/Riyadh"
 USE_I18N = True
 USE_TZ = True
 STATIC_URL = "static/"
+STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # Uploaded student papers live on the local disk. MEDIA_ROOT is deliberately
 # never served as static files: attachments are streamed through an
@@ -69,6 +84,35 @@ STATIC_URL = "static/"
 MEDIA_URL = "media/"
 MEDIA_ROOT = BASE_DIR / "media"
 SUBMISSION_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
+
+# OCR reads files from local storage, never from a public URL. A student paper
+# of a few pages is the expected case; 40 pages is high enough not to clip a
+# normal exam and low enough to keep a synchronous request from hanging the API.
+OCR_LANGUAGES = "ara+eng"
+OCR_PDF_MAX_PAGES = 40
+OCR_PDF_TEXT_MIN_CHARS = 20
+OCR_PDF_DPI = 200
+
+# Gemini stays on the server. The key never ships in the Flutter app or in git.
+GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.6-flash")
+GEMINI_FALLBACK_MODEL = os.environ.get("GEMINI_FALLBACK_MODEL", "gemini-3.5-flash")
+GEMINI_TIMEOUT_MS = int(os.environ.get("GEMINI_TIMEOUT_MS", "30000"))
+
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "handlers": {
+        "console": {"class": "logging.StreamHandler"},
+    },
+    "loggers": {
+        "apps.assessments": {
+            "handlers": ["console"],
+            "level": "DEBUG" if DEBUG else "WARNING",
+            "propagate": False,
+        },
+    },
+}
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 

@@ -4,12 +4,15 @@ import '../l10n/app_language.dart';
 import '../services/attachment_picker.dart';
 import '../services/bayyin_api.dart';
 import '../widgets/async_states.dart';
+import '../widgets/branding.dart';
 import '../widgets/language_switcher.dart';
+import '../widgets/responsive.dart';
+import '../widgets/teacher_home.dart';
 import 'classroom_students.dart';
 import 'teacher_assessments.dart';
 
-/// Read-only view of the classrooms the signed-in teacher is assigned to.
-/// The backend already scopes the list, so no filtering happens here.
+/// The classrooms assigned to the signed-in teacher. Tapping a class opens
+/// its roster, where the teacher can add students.
 class TeacherDashboard extends StatefulWidget {
   const TeacherDashboard({
     super.key,
@@ -48,24 +51,16 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
     final strings = context.strings;
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              strings.appName,
-              style: const TextStyle(fontWeight: FontWeight.w800),
-            ),
-            Text(strings.appTagline, style: const TextStyle(fontSize: 12)),
-          ],
-        ),
+        titleSpacing: 16,
+        title: const BayyinBrandLockup(),
         actions: [
           LanguageSwitcher(onLocaleChanged: widget.onLocaleChanged),
           IconButton(
             onPressed: widget.onLogout,
             tooltip: strings.logout,
-            icon: const Icon(Icons.logout),
+            icon: const Icon(Icons.logout_rounded),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
         ],
       ),
       body: RefreshIndicator(
@@ -87,46 +82,38 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
               );
             }
             final classrooms = snapshot.data ?? [];
-            return ListView(
-              padding: const EdgeInsets.all(20),
+            return ResponsivePage(
+              physics: const AlwaysScrollableScrollPhysics(),
               children: [
-                Text(
-                  strings.greeting(widget.session.displayName),
-                  style: Theme.of(context).textTheme.headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w800),
+                TeacherHomeGreeting(name: widget.session.displayName),
+                const SizedBox(height: 20),
+                TeacherHomeOverview(classrooms: classrooms),
+                const SizedBox(height: 22),
+                TeacherHomeSectionTitle(title: strings.quickActions),
+                const SizedBox(height: 10),
+                TeacherHomeActionCard(
+                  icon: Icons.assignment_rounded,
+                  title: strings.assessments,
+                  subtitle: strings.openAssessmentsHint,
+                  onTap: () => _openAssessments(classrooms),
                 ),
-                const SizedBox(height: 4),
-                Text(strings.teacherClassesSubtitle),
-                const SizedBox(height: 16),
-                Align(
-                  alignment: AlignmentDirectional.centerStart,
-                  child: FilledButton.tonalIcon(
-                    onPressed: () => _openAssessments(classrooms),
-                    icon: const Icon(Icons.assignment_outlined),
-                    label: Text(strings.assessments),
-                  ),
-                ),
-                const SizedBox(height: 24),
-                Text(
-                  strings.myClasses,
-                  style: Theme.of(context).textTheme.titleLarge
-                      ?.copyWith(fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 22),
+                TeacherHomeSectionTitle(title: strings.myClasses),
+                const SizedBox(height: 10),
                 if (classrooms.isEmpty)
                   EmptyState(
-                    icon: Icons.school_outlined,
+                    icon: Icons.school_rounded,
                     message: strings.noAssignedClasses,
                   )
                 else
-                  ...classrooms.map(
-                    (classroom) => Padding(
-                      padding: const EdgeInsetsDirectional.only(bottom: 10),
-                      child: _ClassroomTile(
-                        classroom: classroom,
-                        onTap: () => _openClassroom(classroom),
-                      ),
-                    ),
+                  ResponsiveGrid(
+                    children: [
+                      for (final classroom in classrooms)
+                        TeacherClassroomCard(
+                          classroom: classroom,
+                          onTap: () => _openClassroom(classroom),
+                        ),
+                    ],
                   ),
               ],
             );
@@ -136,8 +123,8 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
     );
   }
 
-  void _openClassroom(ClassroomRecord classroom) {
-    Navigator.of(context).push(
+  Future<void> _openClassroom(ClassroomRecord classroom) async {
+    await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => ClassroomStudentsPage(
           gateway: widget.gateway,
@@ -146,6 +133,7 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
         ),
       ),
     );
+    if (mounted) setState(_reload);
   }
 
   /// The loaded classrooms travel with the teacher so the create form can offer
@@ -158,38 +146,6 @@ class _TeacherDashboardState extends State<TeacherDashboard> {
           picker: widget.picker,
           token: widget.session.token,
           classrooms: classrooms,
-        ),
-      ),
-    );
-  }
-}
-
-class _ClassroomTile extends StatelessWidget {
-  const _ClassroomTile({required this.classroom, required this.onTap});
-
-  final ClassroomRecord classroom;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final strings = context.strings;
-    return Card(
-      child: ListTile(
-        onTap: onTap,
-        leading: const CircleAvatar(child: Icon(Icons.school_outlined)),
-        title: Text(
-          classroom.name,
-          style: const TextStyle(fontWeight: FontWeight.bold),
-        ),
-        subtitle: Text(
-          '${strings.classroomMeta(classroom.grade, classroom.subject)}\n'
-          '${strings.classroomCounts(classroom.academicYear, classroom.studentsCount)}',
-        ),
-        isThreeLine: true,
-        trailing: Icon(
-          Directionality.of(context) == TextDirection.rtl
-              ? Icons.chevron_left
-              : Icons.chevron_right,
         ),
       ),
     );

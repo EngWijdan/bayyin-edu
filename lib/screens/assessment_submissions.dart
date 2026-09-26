@@ -4,6 +4,8 @@ import '../l10n/app_language.dart';
 import '../services/attachment_picker.dart';
 import '../services/bayyin_api.dart';
 import '../widgets/async_states.dart';
+import '../widgets/responsive.dart';
+import '../widgets/teacher_flow.dart';
 import 'submission_entry.dart';
 
 /// The classroom roster for one assessment, marking which students already
@@ -74,7 +76,7 @@ class _AssessmentSubmissionsPageState extends State<AssessmentSubmissionsPage> {
           children: [
             Text(
               widget.assessment.title,
-              style: const TextStyle(fontWeight: FontWeight.w800),
+              style: Theme.of(context).appBarTheme.titleTextStyle,
             ),
             Text(
               strings.studentSubmissions,
@@ -102,9 +104,10 @@ class _AssessmentSubmissionsPageState extends State<AssessmentSubmissionsPage> {
               );
             }
             final roster = snapshot.data ?? const _Roster([]);
-            return ListView(
-              padding: const EdgeInsets.all(20),
+            return ResponsivePage(
               children: [
+                const TeacherFlowBanner(activeStep: 2),
+                const SizedBox(height: 16),
                 Text(strings.studentsLabel(roster.total)),
                 const SizedBox(height: 4),
                 Text(
@@ -121,18 +124,18 @@ class _AssessmentSubmissionsPageState extends State<AssessmentSubmissionsPage> {
                 const SizedBox(height: 16),
                 if (roster.entries.isEmpty)
                   EmptyState(
-                    icon: Icons.person_off_outlined,
+                    icon: Icons.person_off_rounded,
                     message: strings.noStudentsInClass,
                   )
                 else
-                  ...roster.entries.map(
-                    (entry) => Padding(
-                      padding: const EdgeInsetsDirectional.only(bottom: 10),
-                      child: _RosterTile(
-                        entry: entry,
-                        onTap: () => _openEntry(entry),
-                      ),
-                    ),
+                  ResponsiveGrid(
+                    children: [
+                      for (final entry in roster.entries)
+                        _RosterTile(
+                          entry: entry,
+                          onTap: () => _openEntry(entry),
+                        ),
+                    ],
                   ),
               ],
             );
